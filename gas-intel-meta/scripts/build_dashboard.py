@@ -702,7 +702,7 @@ def _render_html(payload: dict[str, Any]) -> str:
       padding: 12px;
     }}
     .viz-tall {{
-      min-height: 720px;
+      min-height: 860px;
       background:
         radial-gradient(circle at 12% 12%, rgba(31,111,95,0.08), transparent 24%),
         linear-gradient(180deg, rgba(36,48,65,0.02), transparent 30%),
@@ -891,7 +891,7 @@ def _render_html(payload: dict[str, Any]) -> str:
       </div>
       <div class="network-shell">
         <div>
-          <svg class="viz viz-tall" id="network-map" viewBox="0 0 920 760" preserveAspectRatio="xMidYMid meet"></svg>
+          <svg class="viz viz-tall" id="network-map" viewBox="0 0 1040 860" preserveAspectRatio="xMidYMid meet"></svg>
           <div class="legend">
             <span class="u0">Util < 50%</span>
             <span class="u1">50-80%</span>
@@ -1332,8 +1332,8 @@ def _render_html(payload: dict[str, Any]) -> str:
         maxY: Math.max(...ys),
       }};
       const pad = 64;
-      const width = 920;
-      const height = 760;
+      const width = 1040;
+      const height = 860;
       const scaleX = (width - pad * 2) / ((bounds.maxX - bounds.minX) || 1);
       const scaleY = (height - pad * 2) / ((bounds.maxY - bounds.minY) || 1);
       const scale = Math.min(scaleX, scaleY);
@@ -1396,12 +1396,12 @@ def _render_html(payload: dict[str, Any]) -> str:
       {{
         key: 'amba',
         target: networkZoomAmba,
-        bounds: {{ minLon: -59.6, maxLon: -58.6, minLat: -35.0, maxLat: -33.8 }},
+        bounds: {{ minLon: -59.85, maxLon: -58.45, minLat: -35.15, maxLat: -33.65 }},
       }},
       {{
         key: 'tratayen',
         target: networkZoomTratayen,
-        bounds: {{ minLon: -69.2, maxLon: -67.8, minLat: -39.2, maxLat: -37.8 }},
+        bounds: {{ minLon: -69.45, maxLon: -67.55, minLat: -39.45, maxLat: -37.55 }},
       }},
     ];
     data.network.available_months.forEach((month, idx) => {{
@@ -1662,10 +1662,10 @@ def _render_html(payload: dict[str, Any]) -> str:
       }}).join('');
 
       networkMap.innerHTML = `
-        <rect x="0" y="0" width="920" height="760" rx="18" class="map-ocean" />
+        <rect x="0" y="0" width="1040" height="860" rx="18" class="map-ocean" />
         ${{grid}}
         <path d="${{projectedNetwork.countryPath}}" class="country-fill" />
-        <rect x="32" y="32" width="856" height="696" rx="26" class="map-frame" />
+        <rect x="32" y="32" width="976" height="796" rx="26" class="map-frame" />
         <path d="${{projectedNetwork.countryPath}}" class="country-outline" />
         ${{exogenousMarkup}}
         ${{edgesMarkup}}
@@ -1729,16 +1729,22 @@ def _render_html(payload: dict[str, Any]) -> str:
 
     function renderZoomMaps(visibleEdges, visibleNodes, exogenousLookup, maxSource, maxSink, maxObservedThroughput) {{
       zoomConfigs.forEach(config => {{
-        const nodes = visibleNodes.filter(node =>
+        const coreNodes = visibleNodes.filter(node =>
           node.longitud >= config.bounds.minLon &&
           node.longitud <= config.bounds.maxLon &&
           node.latitud >= config.bounds.minLat &&
           node.latitud <= config.bounds.maxLat
         );
-        const nodeSet = new Set(nodes.map(node => node.node_id));
-        const edges = visibleEdges.filter(edge => nodeSet.has(edge.source_node_id) && nodeSet.has(edge.target_node_id));
+        const coreSet = new Set(coreNodes.map(node => node.node_id));
+        const edges = visibleEdges.filter(edge => coreSet.has(edge.source_node_id) || coreSet.has(edge.target_node_id));
+        const expandedSet = new Set(coreNodes.map(node => node.node_id));
+        edges.forEach(edge => {{
+          expandedSet.add(edge.source_node_id);
+          expandedSet.add(edge.target_node_id);
+        }});
+        const nodes = visibleNodes.filter(node => expandedSet.has(node.node_id));
         const projected = zoomProject(nodes, edges, 520, 320, 28);
-        const bubbles = nodes.map(node => {{
+        const bubbles = coreNodes.map(node => {{
           const item = exogenousLookup.get(node.node_id);
           if (!item) return '';
           if ((item.supply_mm3_dia_proxy || 0) <= 0 && (item.withdrawal_mm3_dia_proxy || 0) <= 0 && (item.observed_throughput_mm3_dia || 0) <= 0) return '';
@@ -1765,7 +1771,8 @@ def _render_html(payload: dict[str, Any]) -> str:
         }}).join('');
         const nodesMarkup = projected.nodes.map(node => {{
           const selected = selectedNodeId === node.node_id;
-          return `<circle cx="${{node.x}}" cy="${{node.y}}" r="3.8" fill="#fff" stroke="${{selected ? 'var(--accent)' : 'rgba(36,48,65,0.35)'}}" stroke-width="${{selected ? 2.2 : 1.1}}" />`;
+          const label = `<text x="${{node.x + 6}}" y="${{node.y - 6}}" font-size="10.5" fill="#4f5968">${{node.nombre}}</text>`;
+          return `<circle cx="${{node.x}}" cy="${{node.y}}" r="3.8" fill="#fff" stroke="${{selected ? 'var(--accent)' : 'rgba(36,48,65,0.35)'}}" stroke-width="${{selected ? 2.2 : 1.1}}" />${{label}}`;
         }}).join('');
         config.target.innerHTML = `
           <rect x="0" y="0" width="520" height="320" rx="12" fill="rgba(255,255,255,0.88)" />
