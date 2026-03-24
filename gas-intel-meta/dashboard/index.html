@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GCIE Dashboard</title>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --panel: #fffaf1;
+      --ink: #1e2430;
+      --muted: #6a7280;
+      --line: #d8cfbf;
+      --accent: #1f6f5f;
+      --accent-2: #b85c38;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(31,111,95,0.14), transparent 28%),
+        radial-gradient(circle at top right, rgba(184,92,56,0.12), transparent 24%),
+        var(--bg);
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1, h2 { margin: 0 0 12px; font-family: "IBM Plex Serif", Georgia, serif; }
+    p { margin: 0; color: var(--muted); }
+    .hero {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 2fr 1fr;
+      margin-bottom: 24px;
+    }
+    .panel {
+      background: color-mix(in srgb, var(--panel) 92%, white 8%);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 8px 24px rgba(25, 35, 45, 0.05);
+    }
+    .grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-bottom: 24px;
+    }
+    .value { font-size: 2rem; font-weight: 700; color: var(--accent); }
+    .small { font-size: 0.92rem; color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.94rem; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+    th { color: var(--muted); font-weight: 600; }
+    .two {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 1.1fr 0.9fr;
+      margin-bottom: 24px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(31,111,95,0.1);
+      color: var(--accent);
+      font-size: 0.84rem;
+      font-weight: 700;
+    }
+    @media (max-width: 900px) {
+      .hero, .grid, .two { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <section class="panel">
+        <span class="badge">GCIE Live Snapshot</span>
+        <h1>Data, Model, and Predictions</h1>
+        <p>Single-page view of the current datalake snapshot, the active SP1 baseline, and the latest forecast outputs.</p>
+      </section>
+      <section class="panel">
+        <h2>SP1 Metric</h2>
+        <div class="value" id="metric-value"></div>
+        <p class="small" id="metric-label"></p>
+      </section>
+    </div>
+
+    <section class="grid" id="top-cards"></section>
+
+    <section class="two">
+      <div class="panel">
+        <h2>Datalake Tables</h2>
+        <table>
+          <thead><tr><th>Table</th><th>Rows</th><th>Range</th></tr></thead>
+          <tbody id="datalake-table"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>SP1 By Segment</h2>
+        <table>
+          <thead><tr><th>Segment</th><th>Mean APE</th><th>N</th></tr></thead>
+          <tbody id="segment-table"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="two">
+      <div class="panel">
+        <h2>Latest Predictions</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Segment</th><th>Actual</th><th>Predicted</th></tr></thead>
+          <tbody id="prediction-table"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>Experiment Log</h2>
+        <table>
+          <thead><tr><th>Timestamp</th><th>Hypothesis</th><th>Metric</th><th>Delta</th><th>Kept</th></tr></thead>
+          <tbody id="results-table"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+  <script>
+    const data = {"forecast": {"hypothesis": "Seasonal monthly blend with HDD adjustment and lag fallback", "metric_name": "weighted_mape", "metric_value": 0.15378441199363313, "train_rows": 1080, "validation_rows": 9, "model_artifacts": {"cadence": "monthly", "lag_keys": ["lag_1", "lag_2", "lag_3"], "segments": ["industrial_bypass", "power_generation_off_system", "residential"], "training_rows": 1080, "validation_rows": 9}, "by_segment": [{"segmento": "industrial_bypass", "mean_ape": 0.22430453956573618, "n": 3}, {"segmento": "power_generation_off_system", "mean_ape": 0.29445911888062465, "n": 3}, {"segmento": "residential", "mean_ape": 0.0620200532296613, "n": 3}], "recent_predictions": [{"fecha": "2025-10-01", "segmento": "industrial_bypass", "actual_volume": 129640000, "predicted_volume": 105606455}, {"fecha": "2025-10-01", "segmento": "power_generation_off_system", "actual_volume": 90054000, "predicted_volume": 90941349}, {"fecha": "2025-10-01", "segmento": "residential", "actual_volume": 658742000, "predicted_volume": 630276620}, {"fecha": "2025-11-01", "segmento": "industrial_bypass", "actual_volume": 89615000, "predicted_volume": 98576945}, {"fecha": "2025-11-01", "segmento": "power_generation_off_system", "actual_volume": 144186000, "predicted_volume": 93265542}, {"fecha": "2025-11-01", "segmento": "residential", "actual_volume": 457561000, "predicted_volume": 515732080}, {"fecha": "2025-12-01", "segmento": "industrial_bypass", "actual_volume": 157768000, "predicted_volume": 96629452}, {"fecha": "2025-12-01", "segmento": "power_generation_off_system", "actual_volume": 221462000, "predicted_volume": 106220770}, {"fecha": "2025-12-01", "segmento": "residential", "actual_volume": 348300000, "predicted_volume": 342826298}]}, "datalake": {"produccion_diaria": {"rows": 51, "min_fecha": "2026-01-01 00:00:00", "max_fecha": "2026-01-01 00:00:00"}, "gas_asociado_ratio": {"rows": 1, "min_fecha": "2026-01-01 00:00:00", "max_fecha": "2026-01-01 00:00:00"}, "consumo_diario": {"rows": 1098, "min_fecha": "1993-01-01 00:00:00", "max_fecha": "2025-12-01 00:00:00"}, "clima": {"rows": 59260, "min_fecha": "2010-01-01 00:00:00", "max_fecha": "2026-03-23 00:00:00"}, "calendario": {"rows": 6574, "min_fecha": "2010-01-01", "max_fecha": "2027-12-31"}, "tipo_cambio": {"rows": 3847, "min_fecha": "2010-06-01 00:00:00", "max_fecha": "2026-03-20 00:00:00"}}, "results": [{"timestamp": "2026-03-24T15:16:25-03:00", "hypothesis": "Seasonal monthly blend with HDD adjustment and lag fallback", "metric_value": "0.15378441199363313", "delta_vs_prev": "-0.41153478703249157", "kept": "kept"}]};
+
+    const fmtInt = value => new Intl.NumberFormat('en-US').format(value);
+    const fmtPct = value => (value * 100).toFixed(2) + '%';
+
+    document.getElementById('metric-value').textContent = fmtPct(data.forecast.metric_value);
+    document.getElementById('metric-label').textContent =
+      `${data.forecast.metric_name} | cadence: ${data.forecast.model_artifacts.cadence} | hypothesis: ${data.forecast.hypothesis}`;
+
+    const cards = [
+      ['Train Rows', data.forecast.train_rows],
+      ['Validation Rows', data.forecast.validation_rows],
+      ['Tracked Segments', data.forecast.model_artifacts.segments.length],
+    ];
+    const cardsNode = document.getElementById('top-cards');
+    cards.forEach(([label, value]) => {
+      const el = document.createElement('section');
+      el.className = 'panel';
+      el.innerHTML = `<div class="small">${label}</div><div class="value">${fmtInt(value)}</div>`;
+      cardsNode.appendChild(el);
+    });
+
+    const datalakeNode = document.getElementById('datalake-table');
+    Object.entries(data.datalake).forEach(([table, summary]) => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${table}</td><td>${fmtInt(summary.rows)}</td><td>${summary.min_fecha || '-'} -> ${summary.max_fecha || '-'}`;
+      datalakeNode.appendChild(row);
+    });
+
+    const segmentNode = document.getElementById('segment-table');
+    data.forecast.by_segment.forEach(item => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${item.segmento}</td><td>${fmtPct(item.mean_ape)}</td><td>${item.n}</td>`;
+      segmentNode.appendChild(row);
+    });
+
+    const predictionNode = document.getElementById('prediction-table');
+    data.forecast.recent_predictions.forEach(item => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${item.fecha}</td><td>${item.segmento}</td><td>${fmtInt(item.actual_volume)}</td><td>${fmtInt(item.predicted_volume)}</td>`;
+      predictionNode.appendChild(row);
+    });
+
+    const resultsNode = document.getElementById('results-table');
+    if (data.results.length === 0) {
+      const row = document.createElement('tr');
+      row.innerHTML = '<td colspan="5">No experiments logged yet.</td>';
+      resultsNode.appendChild(row);
+    } else {
+      data.results.slice().reverse().forEach(item => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${item.timestamp}</td><td>${item.hypothesis}</td><td>${item.metric_value}</td><td>${item.delta_vs_prev}</td><td>${item.kept}</td>`;
+        resultsNode.appendChild(row);
+      });
+    }
+  </script>
+</body>
+</html>
