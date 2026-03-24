@@ -1,47 +1,73 @@
-# Demand Forecast Engine — Research Program
+# Demand Forecast Engine — Active Program
 
-## Current objective
-Minimize MAPE weighted by volume on validation set (last 3 months of available data).
-MAPE = sum(|actual - predicted| / actual * volume) / sum(volume)
-Lower is better.
+## Current state
+SP1 is implemented and running end-to-end against the local DuckDB snapshot.
 
-## Baseline
-LightGBM with: temperature, day_of_week, month, HDD, CDD, consumption lags (7/14/28 days), segment.
-Establish baseline before any modifications.
+- Current active metric: `weighted_mape = 0.15378441199363313`
+- Current model: seasonal monthly baseline with lag priors and HDD adjustment
+- Current cadence: monthly, using ENARGAS historical consumption as the observed demand proxy
+- Main limitation: the target is still served/observed volume, not latent demand
 
-## Research agenda (in order of priority)
+## Operational context
+The forecast should not be treated as pure “weather to demand”.
+In winter, transport and deliverability constraints can cap served volume.
+That means SP1 now sits on top of two realities:
 
-### Phase A — Feature engineering
-1. Add temperature×segment interaction features. Hypothesis: residential has stronger temp sensitivity than industrial.
-2. Add HDD with different base temperatures (15°C, 17°C, 18°C, 20°C) and select best.
-3. Cyclic encoding for month and day_of_week (sin/cos transforms).
-4. Add 60-day and 90-day consumption lags.
-5. Add rolling std of consumption (volatility feature) at 7 and 30 day windows.
+1. latent demand signal from weather, seasonality and segment behavior
+2. physical deliverability signal from the transport network
 
-### Phase B — Segmentation
-6. Train separate models per segment (residential, commercial, industrial, GNC). Compare vs. unified model.
-7. Add segment×month interaction.
+The network stack is now available in the datalake through:
+- `transporte_utilizacion_mensual`
+- `red_nodos_canonica`
+- `red_tramos_canonica`
+- `red_solver_resumen_mensual`
 
-### Phase C — Algorithm exploration
-8. XGBoost with same features as best LightGBM.
-9. CatBoost with categorical features (segment, estacion).
-10. Linear baseline (Ridge) for interpretability comparison.
+## Active objective
+Improve SP1 while keeping it interpretable and robust on the latest validation window.
 
-### Phase D — Advanced features
-11. Trend decomposition: add STL decomposition residuals as features.
-12. Add INDEC activity index as industrial demand proxy.
-13. Holiday proximity features (days before/after feriado).
-14. Add transport congestion features from `transporte_utilizacion_mensual` to separate latent demand from deliverable demand in winter.
+Primary metric:
+- `weighted_mape`
 
-## Constraints — NEVER violate
-- No data leakage: features must only use data available at prediction time
-- No look-ahead: lags must be true historical lags
-- Budget: 3 minutes max per experiment
-- Model must be interpretable (no black-box neural nets)
-- Validate on held-out last 3 months only
-- Distinguish demand from deliverability: congestion may cap served volume even when latent demand is higher
+Secondary objective:
+- separate “demand wanted” from “volume actually delivered” during stressed winter months
 
-## Expected progress
-Baseline MAPE: TBD (establish first)
-Target MAPE: <15%
-Stretch target: <10%
+## Current baseline contract
+The kept baseline uses:
+- monthly seasonality
+- segment priors
+- lag structure adapted to the available monthly history
+- HDD and temperature adjustments
+
+It is intentionally simple and stable.
+No change should replace it unless it improves the validation metric on the real snapshot.
+
+## Priority agenda
+
+### Phase A — Demand vs deliverability
+1. Add regime features from network stress:
+   - corridor congestion flags
+   - `unmet_withdrawal_mm3_dia` from `red_solver_resumen_mensual`
+   - winter stress indicator by month
+2. Train a two-stage approach:
+   - latent demand baseline
+   - served volume adjustment under transport stress
+3. Compare one unified model vs. winter-specific correction layer.
+
+### Phase B — Better weather structure
+4. Test alternate HDD bases and interactions by segment.
+5. Add smoother temperature seasonality instead of only discrete month effects.
+6. Revisit lag structure once higher-frequency or cleaner demand history appears.
+
+### Phase C — Explainability and monitoring
+7. Keep every promoted run logged in `results.tsv`.
+8. Keep dashboard charts aligned with the active model contract.
+9. Add segment-level error decomposition for winter vs. non-winter periods.
+
+## Constraints
+- No leakage
+- No future transport data in features
+- Keep runtime small and interpretation clear
+- Do not confuse observed delivered volume with latent demand without labeling it explicitly
+
+## Immediate next step
+Use network stress outputs as a correction layer on top of the current monthly baseline, not as a direct replacement of the core seasonality model.

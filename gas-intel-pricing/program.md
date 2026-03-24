@@ -1,51 +1,69 @@
-# Pricing & Spread Engine — Research Program
+# Pricing & Spread Engine — Active Program
 
-## Current objective
-Maximize average simulated net spread ($/MMBtu) on 12-month backtest.
-Spread = Price_sale - Cost_acquisition - Transport - Tolls
-Constraint: sale price cannot exceed MEGSA price + 5%.
-Higher is better.
+## Current state
+SP3 is not yet implemented as a real engine.
+The project now has enough upstream structure to begin it seriously:
 
-## Baseline
-Deterministic parametric model:
-Price_sale = Cost_acquisition + Transport + Tolls + Margin_target
-Initial Margin_target: 0.30 USD/MMBtu (to be calibrated from historical data).
+- SP1 baseline is stable
+- SP2 baseline is stable
+- transport and canonical network layers exist
+- dashboard can already expose network stress and solver state
 
-## Research agenda
+## Why SP3 changed
+The old framing assumed transport as an additive cost input.
+That is too weak for this project now.
 
-### Phase A — Baseline calibration
-1. Establish baseline spread from historical data. Calculate typical transport + tolls per segment.
-2. Verify MEGSA price constraint is binding in what % of periods.
-3. Document baseline mean spread and volatility.
+Pricing must reflect:
+- acquisition cost at origin
+- corridor deliverability
+- seasonal scarcity and congestion
+- interconnection optionality between TGS and TGN systems
 
-### Phase B — Seasonal adjustments
-4. Add seasonal margin: winter premium (higher demand, tighter supply → more pricing power).
-5. Add cold snap bonus: detect HDD spikes and apply dynamic margin adjustment.
-6. Test month-specific margins vs. season-specific vs. continuous function.
-7. Add congestion premium from `transporte_utilizacion_mensual` and basin-to-market routing constraints.
+## Active objective
+Build the first real spread engine with explicit physical context.
 
-### Phase C — Segment differentiation
-8. Price by segment: residential (less elastic) vs. industrial (more elastic, more competitive).
-9. Volume tiers: discount for large industrial clients in exchange for take-or-pay commitment.
-10. GNC-specific pricing (highly price-sensitive segment).
+Primary metric:
+- simulated net spread on backtest
 
-### Phase D — Gas asociado pass-through strategy
-11. When gas asociado sourcing is cheap, test 3 strategies:
-    - Strategy A: pass 100% savings to client (price competitive, grow volume)
-    - Strategy B: partial pass-through (keep 50% of savings as extra margin)
-    - Strategy C: maintain price, maximize margin
-    - Simulate each strategy's impact on total portfolio spread over 12 months.
+But before optimization, the first milestone is descriptive:
+- reconstruct a plausible delivered-cost stack by corridor and destination
 
-### Phase E — MEGSA-indexed formulas
-12. Formula pricing: Price = MEGSA_ref × factor + fixed_component.
-    Test different factor values (0.90, 0.95, 1.00, 1.05).
-13. Evaluate lagged MEGSA index vs. current (removes volatility, but less accurate).
+## Phase 1 — Foundational model
+1. Define a first pricing target:
+   - sale price at destination
+   - implied spread vs. acquisition cost
+2. Build corridor-level delivered-cost features:
+   - source basin
+   - interconnection path
+   - stressed route count
+   - effective capacity on relevant corridor
+3. Start with deterministic pricing bands instead of optimization.
 
-## Constraints
-- Sale price <= MEGSA price + 5% (competitiveness constraint — hard constraint)
-- Must use upstream Supply Engine acquisition cost (do not override with manual values)
-- Budget: 2 minutes max per experiment
+## Phase 2 — Basis and scarcity
+4. Add congestion premium by route family, not a single transport utilization scalar.
+5. Model scarcity regimes:
+   - normal
+   - winter stressed
+   - interconnection constrained
+6. Calibrate how much spread can widen when cheap Neuquina gas is not fully deliverable.
 
-## Expected progress
-Baseline spread: TBD
-Target: improve spread by >15% vs. naive fixed-margin baseline
+## Phase 3 — Commercial formulas
+7. Compare:
+   - fixed margin
+   - seasonal margin
+   - congestion-aware margin
+   - index-linked formula
+8. Add client/segment differentiation only after the corridor-level basis is believable.
+
+## Dependencies
+- SP2 kept baseline for acquisition cost
+- F19 transport utilization
+- F20b canonical network
+- F23 solver summary
+- F24 compressors and loops
+
+## Constraint
+Do not start SP3 from synthetic “spread optimization” before reconstructing the physical delivered-cost story.
+
+## Immediate next step
+Implement the first corridor-level delivered-cost table and use it as the base layer for SP3.

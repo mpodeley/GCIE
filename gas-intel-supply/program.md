@@ -1,57 +1,73 @@
-# Supply & Sourcing Engine — Research Program
+# Supply & Sourcing Engine — Active Program
 
-## Current objective
-Minimize MAE of weighted average acquisition price ($/MMBtu) on 12-month backtest.
-MAE = mean(|actual_acquisition_price - predicted_acquisition_price|)
-Lower is better.
+## Current state
+SP2 is implemented and running end-to-end on the current DuckDB snapshot.
 
-## Key context
-Vaca Muerta shale oil is scaling (Bajada del Palo Oeste, La Amarga Chica, Rincón de Aranda).
-Associated gas enters at near-zero marginal cost and should pressure prices down when oil ramps.
-But that is only half of the market: once gas is priced at PIST, transport constraints determine whether low-cost gas can actually reach the demand center. Winter saturation on TGN/TGS corridors can widen basin spreads and raise effective acquisition cost.
+- Current active metric: `mae_usd_mmbtu = 0.29947537459945683`
+- Current target: monthly `precios_boca_pozo.precio_referencia_mmbtu`
+- Current kept baseline: seasonal supply-price blend with FX and unconventional output adjustments
+- Current status: transport features were tested, but the first direct inclusion attempts did not beat the kept baseline
 
-## Current baseline
-Implemented monthly deterministic baseline by cuenca with:
-- price lags (1/3/6)
-- month and quarter seasonality
-- unconventional gas/oil output and shares from `pozos_no_convencional`
-- FX level from `tipo_cambio`
+## Operational context
+The supply problem is no longer just “production and FX”.
+The project now has a working transport stack:
 
-Current realized baseline MAE on the latest 12-month backtest: about `0.30 USD/MMBtu`.
-Transport congestion is now available in the data lake and already part of the next iteration plan, but the first direct inclusion attempt did not beat the kept baseline.
+- `transporte_utilizacion_mensual`
+- `red_tramos_canonica`
+- `red_solver_tramos_mensuales`
+- `red_compresoras_canonica`
+- `red_loops_canonica`
 
-## Research agenda
+This means SP2 can move from a cuenca-only view toward a deliverability-aware sourcing model.
 
-### Phase A — Core supply model
-1. Improve the current baseline with richer corridor-specific transport utilization and headroom features.
-2. Restore historical `gas_asociado_ratio` by cuenca from F01 and add GOR trend (3-month rolling slope).
-3. Add vm petroleum production lag3 and lag6 once `produccion_diaria` recovers basin fidelity.
-4. Compare unified vs. basin-specific models for Neuquina, Austral, Noroeste and South corridor basins.
+## Active objective
+Reduce acquisition-price MAE while preserving the economic interpretation of the model.
 
-### Phase B — Supply curve modeling
-5. Model explicit aggregate supply curve:
-   - free gas portion at reference price X
-   - asociado gas portion at processing_cost only (~0.5 USD/MMBtu)
-   - Find equilibrium clearing price given demand volume and corridor headroom
-6. Incorporate production capacity constraints by basin and transport constraints by gasoducto.
+Primary metric:
+- `mae_usd_mmbtu`
 
-### Phase C — Opportunity windows
-7. Build opportunity window detector:
-   - Identify months where spot < firm contract cost
-   - Features: inventory proxy, demand seasonality, production ramp-up rate, transport slack
-   - Binary classifier: is this an opportunity window?
+Secondary objective:
+- start distinguishing price at origin from effective delivered cost under corridor stress
 
-### Phase D — Contract mix optimization
-8. Given supply forecast, model optimal firm/interrumpible/spot mix that minimizes cost subject to:
-   - Minimum reliability constraint (95% of demand met)
-   - Volume commitment constraints
+## Current baseline contract
+The kept baseline uses:
+- month / quarter seasonality
+- lags `1/3/6`
+- unconventional output features from `pozos_no_convencional`
+- FX from `tipo_cambio`
+
+It does not yet rely on the canonical network in the kept version.
+
+## Priority agenda
+
+### Phase A — Better target definition
+1. Decide whether SP2 should keep forecasting pure `boca de pozo` price or move to a deliverability-adjusted acquisition cost.
+2. If the target stays at PIST, use network only as regime context.
+3. If the target moves toward delivered cost, incorporate transport basis explicitly.
+
+### Phase B — Network-aware features
+4. Use `red_solver_resumen_mensual` as a regime layer:
+   - unmet withdrawal
+   - saturated edge count
+   - stressed corridor flags
+5. Add corridor-specific features instead of one linear congestion adjustment.
+6. Use `F24` assets as structural state:
+   - active loops
+   - compressor availability proxy
+   - effective capacity on canonical corridors
+
+### Phase C — Upstream fidelity
+7. Recover better historical `gas_asociado_ratio` and basin fidelity from production sources.
+8. Bring `produccion_diaria` and unconventional activity into a cleaner basin/corridor mapping.
+9. Compare unified vs. corridor-specific submodels.
 
 ## Constraints
-- No look-ahead on petroleum production data
-- No look-ahead on transport congestion; only use published or lagged monthly operational data
-- Budget: 3 minutes max
-- All prices must be in USD/MMBtu (use tipo_cambio table for AR$ conversion)
+- No look-ahead on production or transport
+- Preserve interpretability
+- Prefer regime models over opaque black-box corrections
+- Do not promote a worse MAE model just because it uses more physics
 
-## Expected progress
-Baseline MAE: ~0.30 USD/MMBtu
-Target MAE: <10% of average acquisition price
+## Immediate next step
+Run SP2 in two tracks:
+1. keep the current kept baseline for `boca de pozo`
+2. open a parallel experiment track for delivered-cost / basis modeling using `F23/F24`

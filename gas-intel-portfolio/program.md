@@ -1,56 +1,43 @@
-# Portfolio Optimizer — Research Program
+# Portfolio Optimizer — Active Program
 
-## Current objective
-Maximize Sharpe-like ratio: Spread_total / Portfolio_volatility on 12-month backtest.
-Optimizes BOTH client portfolio selection AND sourcing mix.
-Higher is better.
+## Current state
+SP6 is not yet implemented.
+The project is still upstream of true portfolio optimization, but the foundations are much stronger than before:
 
-## Baseline
-Convex optimization (scipy.optimize) with constraints:
-- Total volume commitment <= available transport capacity
-- Firm supply >= take-or-pay obligation from sales contracts
-- Max single-producer concentration: 30% of total supply
+- SP1 and SP2 are alive
+- network deliverability is explicit
+- corridor stress can be observed and simulated
 
-Decision variables:
-- x_i: fraction of client i to include (0 or 1 for binary, relaxed to [0,1] for LP)
-- y_j: volume from producer j (continuous)
+That means portfolio optimization should be staged, not started as a full LP/QP from day one.
 
-Objective: maximize sum(spread_i * volume_i * x_i) - risk_penalty * volatility
+## Active objective
+Prepare SP6 to optimize commercial exposure against physical deliverability, not just financial spread.
 
-## Research agenda
+## Required inputs before full optimization
+- stable SP3 delivered-cost / spread layer
+- first SP4 scenario library
+- route or corridor capacity budgets that are auditable
 
-### Phase A — Baseline
-1. Implement baseline LP/QP with scipy.optimize. Establish baseline Sharpe.
-2. Analyze: which clients are always selected? Which producers?
-3. Check constraint binding: is transport always the binding constraint?
+## Priority agenda
 
-### Phase B — Risk-adjusted optimization
-4. Switch to mean-variance optimization: maximize E[spread] - lambda * Var[spread].
-5. Test lambda values: 0 (pure return), 0.5, 1.0, 2.0 (very risk-averse).
-6. Add CVaR constraint: CVaR_95 <= budget (from SP4 outputs).
+### Phase A — Descriptive portfolio feasibility
+1. Build corridor-level capacity budgets by month.
+2. Tag hypothetical client demand to destination corridors.
+3. Measure which client mixes are physically feasible before scoring spread.
 
-### Phase C — Sourcing mix optimization
-7. Optimize firm vs. spot allocation:
-   - More firm: lower average cost, higher volume risk (take-or-pay)
-   - More spot: higher average cost, no volume commitment
-   - Find optimal mix for each season separately.
-8. Multi-basin sourcing: balance Neuquina (cheap but congested in winter) vs. Austral.
+### Phase B — Simple optimization
+4. Start with deterministic constrained selection:
+   - maximize gross spread
+   - subject to corridor headroom and minimum reliability
+5. Only then add volatility / risk penalties.
 
-### Phase D — Robust optimization
-9. Worst-case optimization: maximize minimum spread across stress scenarios from SP4.
-10. Scenario-based stochastic programming: optimize E[spread] subject to P(loss) <= 5%.
+### Phase C — Stochastic optimization
+6. Use SP4 stress scenarios to penalize corridor concentration.
+7. Add diversification across supply basins and route families.
 
-### Phase E — Greedy heuristics
-11. Greedy client addition: add clients in order of marginal Sharpe improvement.
-    Compare to optimal solution quality (should be within 5-10%).
-12. Rolling re-optimization: monthly re-solve as new data arrives.
+## Constraint
+Do not optimize a portfolio against abstract transport capacity only.
+Use the canonical network and scenario layers once SP3 and SP4 are ready enough.
 
-## Constraints
-- Transport capacity: hard constraint (cannot exceed pipeline capacity)
-- Supply reliability: P(demand met) >= 95% (from SP4 Monte Carlo)
-- Single producer concentration: <= 30%
-- Budget: 5 minutes max per experiment (optimization can be expensive)
-
-## Expected progress
-Baseline Sharpe: TBD
-Target: Sharpe improvement >25% vs. naive equal-weight portfolio
+## Immediate next step
+Wait for the first real SP3 corridor-cost table and SP4 scenario set, then implement a feasibility-first optimizer.

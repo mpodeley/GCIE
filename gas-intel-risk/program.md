@@ -1,52 +1,59 @@
-# Risk Engine — Research Program
+# Risk Engine — Active Program
 
-## Current objective
-Minimize CVaR at 95% of total imbalance cost + hedging cost over 12-month Monte Carlo simulation (1000 scenarios).
-CVaR_95 = mean of worst 5% of scenarios.
-Lower is better.
+## Current state
+SP4 is still unimplemented as a real engine, but the project now has much better physical inputs than originally planned.
 
-## Baseline
-Monte Carlo simulation with independent calibrated distributions:
-- Demand shock: N(0, sigma_demand) where sigma calibrated from Demand Forecast historical errors
-- Supply shock: N(0, sigma_supply) for acquisition cost variability
-- Provider failure: Bernoulli(p=0.05) per quarter → forced spot purchase at MEGSA + 20%
-- Transport cut: Bernoulli(p=0.10) in winter, Bernoulli(p=0.02) otherwise
-- Gas asociado ratio shock: tied to crude price (WTI proxy)
+Available inputs now include:
+- SP1 forecast error behavior
+- SP2 acquisition-price behavior
+- transport congestion layers
+- canonical network topology
+- heuristic network solver outputs
+- compressor and loop asset layer
 
-## Research agenda
+This changes the risk agenda materially.
 
-### Phase A — Distribution calibration
-1. Calibrate demand error distribution from SP1 results.tsv (use actual forecast errors).
-2. Calibrate supply cost variability from SP2 outputs.
-3. Verify baseline CVaR_95 value. Document.
+## Active objective
+Build a risk engine that treats transport failure and winter congestion as structural drivers, not just generic Bernoulli shocks.
 
-### Phase B — Correlation structure
-4. Add demand-supply correlation: cold snaps → higher demand AND lower free gas supply.
-   Implement via Gaussian copula or simple bivariate normal.
-5. Add crude price → gas asociado ratio correlation (WTI proxy).
-6. Test sensitivity: how much does correlation structure change CVaR vs. independent model?
+Primary metric:
+- tail cost / shortage risk under stressed network conditions
 
-### Phase C — Stress scenarios
-7. Scenario: WTI drops to $50 → less petroleum production → less gas asociado → higher acquisition price.
-   Quantify impact on annual P&L.
-8. Scenario: TGS/TGN maintenance (pipeline cut) during winter peak. Probability + severity calibrated from `transporte_utilizacion_mensual`.
-9. Scenario: Plan Gas.Ar suspension/modification → loss of incentive prices.
-10. Scenario: Extreme cold snap (July 2007 repeat) — what is cost of meeting demand?
+## Reframed risk model
+The baseline should no longer assume independent synthetic shocks only.
+It should include:
+- demand forecast error
+- supply price variability
+- corridor congestion regime
+- interconnection stress
+- deliverability shortfall from the network layer
 
-### Phase D — Hedging strategies
-11. Evaluate firm vs. spot contract mix as natural hedge (more firm = less spot price risk, more volume commitment risk).
-12. Quantify value of maintaining 10% / 15% / 20% interruptible capacity reserve.
-13. Model minimum inventory/linepack strategy.
+## Priority agenda
 
-### Phase E — Tail risk
-14. Switch from Normal to Student-t distributions for fatter tails.
-15. Test mixture distributions (regime-switching: normal market vs. crisis market).
+### Phase A — Structural risk inputs
+1. Use SP1 and SP2 residuals as empirical error inputs.
+2. Use `red_solver_resumen_mensual` as a physical stress proxy.
+3. Define route-family stress scenarios:
+   - Centro Oeste bottleneck
+   - Neuba stress
+   - Norte constrained winter
+   - Perito Moreno / Mercedes transfer shortfall
 
-## Constraints
-- Monte Carlo: 1000 scenarios minimum for stable CVaR estimate
-- Budget: 5 minutes max per experiment
-- All costs in USD/MMBtu
+### Phase B — Scenario design
+4. Build explicit scenario tables instead of only random parametric shocks.
+5. Separate:
+   - commercial risk
+   - acquisition risk
+   - deliverability risk
+6. Quantify shortage cost under unmet demand regimes from `F23`.
 
-## Expected progress
-Baseline CVaR_95: TBD
-Target: reduce CVaR_95 by >20% vs. baseline via better hedging recommendations
+### Phase C — Hedging logic
+7. Evaluate how much firm transport, alternative sourcing or margin reserve is worth under stressed regimes.
+8. Use F24 assets as mitigation structure, not just as descriptive metadata.
+
+## Constraint
+The first usable SP4 should be scenario-driven and explainable.
+Do not jump straight into high-volume Monte Carlo without a believable physical scenario set.
+
+## Immediate next step
+Create a scenario library built from observed stressed months in `F23`, then layer probabilistic shocks on top.
