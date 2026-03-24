@@ -560,7 +560,10 @@ def _load_network_summary() -> dict[str, Any]:
         "latest_observed_month": None if latest_observed_month is None else str(latest_observed_month),
         "latest_solver_month": None if latest_solver_month is None else str(latest_solver_month),
         "max_supply_proxy": max((float(row["supply_mm3_dia_proxy"] or 0.0) for row in node_exogenous), default=0.0),
+        "max_conv_supply_proxy": max((float(row.get("supply_conventional_mm3_dia_proxy") or 0.0) for row in node_exogenous), default=0.0),
         "max_nc_supply_proxy": max((float(row.get("supply_non_conventional_mm3_dia_proxy") or 0.0) for row in node_exogenous), default=0.0),
+        "max_bolivia_supply_proxy": max((float(row.get("supply_import_bolivia_mm3_dia_proxy") or 0.0) for row in node_exogenous), default=0.0),
+        "max_lng_supply_proxy": max((float(row.get("supply_lng_mm3_dia_proxy") or 0.0) for row in node_exogenous), default=0.0),
         "max_withdrawal_proxy": max((float(row["withdrawal_mm3_dia_proxy"] or 0.0) for row in node_exogenous), default=0.0),
         "max_observed_throughput": max((float(row["observed_throughput_mm3_dia"] or 0.0) for row in node_exogenous_df.to_dict("records")), default=0.0),
     }
@@ -732,7 +735,10 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       margin-right: 6px;
     }}
     .legend .actual::before {{ background: var(--accent); }}
+    .legend .conv::before {{ background: #6b8e23; }}
     .legend .nc::before {{ background: #2a9d8f; border: 2px solid #155b52; }}
+    .legend .bol::before {{ background: #e0c341; }}
+    .legend .lng::before {{ background: #4c78a8; }}
     .legend .pred::before {{ background: var(--accent-2); }}
     .legend .u0::before {{ background: var(--stress-1); }}
     .legend .u1::before {{ background: var(--stress-2); }}
@@ -897,7 +903,10 @@ def _render_network_html(payload: dict[str, Any]) -> str:
         <select id="network-gasoducto"></select>
         <label class="check"><input type="checkbox" id="network-critical"> Stress only</label>
         <label class="check"><input type="checkbox" id="network-show-sources" checked> Source Proxy</label>
+        <label class="check"><input type="checkbox" id="network-show-conv-sources"> Conv</label>
         <label class="check"><input type="checkbox" id="network-show-nc-sources"> NC Source</label>
+        <label class="check"><input type="checkbox" id="network-show-bolivia-sources"> Bolivia</label>
+        <label class="check"><input type="checkbox" id="network-show-lng-sources"> LNG</label>
         <label class="check"><input type="checkbox" id="network-show-sinks" checked> Sink Proxy</label>
         <label class="check"><input type="checkbox" id="network-show-observed" checked> Observed Activity</label>
       </div>
@@ -912,7 +921,10 @@ def _render_network_html(payload: dict[str, Any]) -> str:
             <span class="comp">Compresora</span>
             <span class="loop">Loop activo</span>
             <span class="actual">Source Proxy</span>
+            <span class="conv">Conv</span>
             <span class="nc">NC Source</span>
+            <span class="bol">Bolivia</span>
+            <span class="lng">LNG</span>
             <span class="pred">Sink Proxy</span>
             <span class="u0">Observed Activity</span>
           </div>
@@ -1028,7 +1040,10 @@ def _render_network_html(payload: dict[str, Any]) -> str:
     const networkGasoducto = document.getElementById('network-gasoducto');
     const networkCritical = document.getElementById('network-critical');
     const networkShowSources = document.getElementById('network-show-sources');
+    const networkShowConvSources = document.getElementById('network-show-conv-sources');
     const networkShowNcSources = document.getElementById('network-show-nc-sources');
+    const networkShowBoliviaSources = document.getElementById('network-show-bolivia-sources');
+    const networkShowLngSources = document.getElementById('network-show-lng-sources');
     const networkShowSinks = document.getElementById('network-show-sinks');
     const networkShowObserved = document.getElementById('network-show-observed');
     const networkMonthSelect = document.getElementById('network-month-select');
@@ -1393,7 +1408,10 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       const exogenousPoints = (nodeExogenousMap.get(selectedMonthStart) || []).filter(item => nodeIds.has(item.node_id));
       const exogenousLookup = nodeExogenousLookup(selectedMonthStart);
       const maxSource = Math.max(data.network.overview.max_supply_proxy || 0, 1);
+      const maxConvSource = Math.max(data.network.overview.max_conv_supply_proxy || 0, 1);
       const maxNcSource = Math.max(data.network.overview.max_nc_supply_proxy || 0, 1);
+      const maxBoliviaSource = Math.max(data.network.overview.max_bolivia_supply_proxy || 0, 1);
+      const maxLngSource = Math.max(data.network.overview.max_lng_supply_proxy || 0, 1);
       const maxSink = Math.max(data.network.overview.max_withdrawal_proxy || 0, 1);
       const maxObservedThroughput = Math.max(data.network.overview.max_observed_throughput || 0, 1);
 
@@ -1442,7 +1460,7 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       const exogenousMarkup = exogenousPoints.map(item => {{
         const node = projectedNetwork.nodes.find(candidate => candidate.node_id === item.node_id);
         if (!node) return '';
-        if ((item.supply_mm3_dia_proxy || 0) <= 0 && (item.supply_non_conventional_mm3_dia_proxy || 0) <= 0 && (item.withdrawal_mm3_dia_proxy || 0) <= 0 && (item.observed_throughput_mm3_dia || 0) <= 0) return '';
+        if ((item.supply_mm3_dia_proxy || 0) <= 0 && (item.supply_conventional_mm3_dia_proxy || 0) <= 0 && (item.supply_non_conventional_mm3_dia_proxy || 0) <= 0 && (item.supply_import_bolivia_mm3_dia_proxy || 0) <= 0 && (item.supply_lng_mm3_dia_proxy || 0) <= 0 && (item.withdrawal_mm3_dia_proxy || 0) <= 0 && (item.observed_throughput_mm3_dia || 0) <= 0) return '';
         const parts = [];
         if (networkShowObserved.checked && (item.observed_throughput_mm3_dia || 0) > 0) {{
           const radius = 3 + Math.sqrt((item.observed_throughput_mm3_dia || 0) / maxObservedThroughput) * 18;
@@ -1456,10 +1474,28 @@ def _render_network_html(payload: dict[str, Any]) -> str:
             <circle class="network-node-bubble" data-node-id="${{node.node_id}}" cx="${{node.x}}" cy="${{node.y}}" r="${{radius.toFixed(2)}}" fill="rgba(31,111,95,0.18)" stroke="var(--accent)" stroke-width="1.6" />
           `);
         }}
+        if (networkShowConvSources.checked && (item.supply_conventional_mm3_dia_proxy || 0) > 0) {{
+          const radius = 3 + Math.sqrt((item.supply_conventional_mm3_dia_proxy || 0) / maxConvSource) * 20;
+          parts.push(`
+            <circle class="network-node-bubble" data-node-id="${{node.node_id}}" cx="${{node.x}}" cy="${{node.y}}" r="${{radius.toFixed(2)}}" fill="rgba(107,142,35,0.10)" stroke="#6b8e23" stroke-width="1.2" />
+          `);
+        }}
         if (networkShowNcSources.checked && (item.supply_non_conventional_mm3_dia_proxy || 0) > 0) {{
           const radius = 3 + Math.sqrt((item.supply_non_conventional_mm3_dia_proxy || 0) / maxNcSource) * 18;
           parts.push(`
             <circle class="network-node-bubble" data-node-id="${{node.node_id}}" cx="${{node.x}}" cy="${{node.y}}" r="${{radius.toFixed(2)}}" fill="rgba(42,157,143,0.08)" stroke="#155b52" stroke-width="1.4" stroke-dasharray="2 3" />
+          `);
+        }}
+        if (networkShowBoliviaSources.checked && (item.supply_import_bolivia_mm3_dia_proxy || 0) > 0) {{
+          const radius = 3 + Math.sqrt((item.supply_import_bolivia_mm3_dia_proxy || 0) / maxBoliviaSource) * 18;
+          parts.push(`
+            <circle class="network-node-bubble" data-node-id="${{node.node_id}}" cx="${{node.x}}" cy="${{node.y}}" r="${{radius.toFixed(2)}}" fill="rgba(224,195,65,0.10)" stroke="#b38f00" stroke-width="1.5" />
+          `);
+        }}
+        if (networkShowLngSources.checked && (item.supply_lng_mm3_dia_proxy || 0) > 0) {{
+          const radius = 3 + Math.sqrt((item.supply_lng_mm3_dia_proxy || 0) / maxLngSource) * 18;
+          parts.push(`
+            <circle class="network-node-bubble" data-node-id="${{node.node_id}}" cx="${{node.x}}" cy="${{node.y}}" r="${{radius.toFixed(2)}}" fill="rgba(76,120,168,0.10)" stroke="#4c78a8" stroke-width="1.5" stroke-dasharray="6 3" />
           `);
         }}
         if (networkShowSinks.checked && (item.withdrawal_mm3_dia_proxy || 0) > 0) {{
@@ -1534,11 +1570,11 @@ def _render_network_html(payload: dict[str, Any]) -> str:
           renderNetwork();
         }});
       }});
-      renderZoomMaps(visibleEdges, visibleNodes, exogenousLookup, maxSource, maxNcSource, maxSink, maxObservedThroughput);
+      renderZoomMaps(visibleEdges, visibleNodes, exogenousLookup, maxSource, maxConvSource, maxNcSource, maxBoliviaSource, maxLngSource, maxSink, maxObservedThroughput);
       renderExogenousBalance(selectedMonthStart);
     }}
 
-    function renderZoomMaps(visibleEdges, visibleNodes, exogenousLookup, maxSource, maxNcSource, maxSink, maxObservedThroughput) {{
+    function renderZoomMaps(visibleEdges, visibleNodes, exogenousLookup, maxSource, maxConvSource, maxNcSource, maxBoliviaSource, maxLngSource, maxSink, maxObservedThroughput) {{
       zoomConfigs.forEach(config => {{
         const coreNodes = visibleNodes.filter(node =>
           node.longitud >= config.bounds.minLon &&
@@ -1558,7 +1594,7 @@ def _render_network_html(payload: dict[str, Any]) -> str:
         const bubbles = coreNodes.map(node => {{
           const item = exogenousLookup.get(node.node_id);
           if (!item) return '';
-          if ((item.supply_mm3_dia_proxy || 0) <= 0 && (item.supply_non_conventional_mm3_dia_proxy || 0) <= 0 && (item.withdrawal_mm3_dia_proxy || 0) <= 0 && (item.observed_throughput_mm3_dia || 0) <= 0) return '';
+          if ((item.supply_mm3_dia_proxy || 0) <= 0 && (item.supply_conventional_mm3_dia_proxy || 0) <= 0 && (item.supply_non_conventional_mm3_dia_proxy || 0) <= 0 && (item.supply_import_bolivia_mm3_dia_proxy || 0) <= 0 && (item.supply_lng_mm3_dia_proxy || 0) <= 0 && (item.withdrawal_mm3_dia_proxy || 0) <= 0 && (item.observed_throughput_mm3_dia || 0) <= 0) return '';
           const projectedNode = projected.nodes.find(candidate => candidate.node_id === node.node_id);
           if (!projectedNode) return '';
           const parts = [];
@@ -1570,9 +1606,21 @@ def _render_network_html(payload: dict[str, Any]) -> str:
             const radius = 4 + Math.sqrt((item.supply_mm3_dia_proxy || 0) / maxSource) * 24;
             parts.push(`<circle cx="${{projectedNode.x}}" cy="${{projectedNode.y}}" r="${{radius.toFixed(2)}}" fill="rgba(31,111,95,0.18)" stroke="var(--accent)" stroke-width="1.4" />`);
           }}
+          if (networkShowConvSources.checked && (item.supply_conventional_mm3_dia_proxy || 0) > 0) {{
+            const radius = 3 + Math.sqrt((item.supply_conventional_mm3_dia_proxy || 0) / maxConvSource) * 20;
+            parts.push(`<circle cx="${{projectedNode.x}}" cy="${{projectedNode.y}}" r="${{radius.toFixed(2)}}" fill="rgba(107,142,35,0.10)" stroke="#6b8e23" stroke-width="1.1" />`);
+          }}
           if (networkShowNcSources.checked && (item.supply_non_conventional_mm3_dia_proxy || 0) > 0) {{
             const radius = 3 + Math.sqrt((item.supply_non_conventional_mm3_dia_proxy || 0) / maxNcSource) * 18;
             parts.push(`<circle cx="${{projectedNode.x}}" cy="${{projectedNode.y}}" r="${{radius.toFixed(2)}}" fill="rgba(42,157,143,0.08)" stroke="#155b52" stroke-width="1.3" stroke-dasharray="2 3" />`);
+          }}
+          if (networkShowBoliviaSources.checked && (item.supply_import_bolivia_mm3_dia_proxy || 0) > 0) {{
+            const radius = 3 + Math.sqrt((item.supply_import_bolivia_mm3_dia_proxy || 0) / maxBoliviaSource) * 18;
+            parts.push(`<circle cx="${{projectedNode.x}}" cy="${{projectedNode.y}}" r="${{radius.toFixed(2)}}" fill="rgba(224,195,65,0.10)" stroke="#b38f00" stroke-width="1.3" />`);
+          }}
+          if (networkShowLngSources.checked && (item.supply_lng_mm3_dia_proxy || 0) > 0) {{
+            const radius = 3 + Math.sqrt((item.supply_lng_mm3_dia_proxy || 0) / maxLngSource) * 18;
+            parts.push(`<circle cx="${{projectedNode.x}}" cy="${{projectedNode.y}}" r="${{radius.toFixed(2)}}" fill="rgba(76,120,168,0.10)" stroke="#4c78a8" stroke-width="1.3" stroke-dasharray="6 3" />`);
           }}
           if (networkShowSinks.checked && (item.withdrawal_mm3_dia_proxy || 0) > 0) {{
             const radius = 4 + Math.sqrt((item.withdrawal_mm3_dia_proxy || 0) / maxSink) * 24;
@@ -1619,7 +1667,10 @@ def _render_network_html(payload: dict[str, Any]) -> str:
     networkGasoducto.addEventListener('change', renderNetwork);
     networkCritical.addEventListener('change', renderNetwork);
     networkShowSources.addEventListener('change', renderNetwork);
+    networkShowConvSources.addEventListener('change', renderNetwork);
     networkShowNcSources.addEventListener('change', renderNetwork);
+    networkShowBoliviaSources.addEventListener('change', renderNetwork);
+    networkShowLngSources.addEventListener('change', renderNetwork);
     networkShowSinks.addEventListener('change', renderNetwork);
     networkShowObserved.addEventListener('change', renderNetwork);
     networkMonthSelect.addEventListener('change', renderNetwork);
