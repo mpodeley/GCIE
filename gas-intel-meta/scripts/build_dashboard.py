@@ -174,6 +174,9 @@ def _load_datalake_summary() -> dict[str, Any]:
             "calendario",
             "precios_boca_pozo",
             "tipo_cambio",
+            "transporte_flujo_mensual",
+            "transporte_capacidad_firme",
+            "transporte_utilizacion_mensual",
         ]:
             count, min_fecha, max_fecha = conn.execute(
                 f"SELECT COUNT(*), MIN(fecha), MAX(fecha) FROM {table}"

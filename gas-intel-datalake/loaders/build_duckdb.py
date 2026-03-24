@@ -26,6 +26,9 @@ TABLE_SOURCES = {
 OPTIONAL_TABLE_SOURCES = {
     "pozos_no_convencional": "pozos_no_convencional.parquet",
     "precios_boca_pozo": "precios_boca_pozo.parquet",
+    "transporte_flujo_mensual": "transporte_flujo_mensual.parquet",
+    "transporte_capacidad_firme": "transporte_capacidad_firme.parquet",
+    "transporte_utilizacion_mensual": "transporte_utilizacion_mensual.parquet",
 }
 
 
