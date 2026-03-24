@@ -22,6 +22,8 @@ PIPES_PATH = PROCESSED_DIR / "red_pandapipes_pipes.parquet"
 NODE_BALANCE_PATH = PROCESSED_DIR / "red_solver_balance_nodal_mensual.parquet"
 EDGE_BALANCE_PATH = PROCESSED_DIR / "red_solver_tramos_mensuales.parquet"
 SUMMARY_PATH = PROCESSED_DIR / "red_solver_resumen_mensual.parquet"
+COMPRESSORS_PATH = PROCESSED_DIR / "red_compresoras_canonica.parquet"
+EDGE_PARAMS_PATH = PROCESSED_DIR / "red_tramos_parametros_canonica.parquet"
 
 ASSUMED_GAS_DENSITY_KG_M3 = 0.8
 DEFAULT_PRESSURE_BAR = 55.0
@@ -60,10 +62,18 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def _load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     missing = [
         path.name
-        for path in (JUNCTIONS_PATH, PIPES_PATH, NODE_BALANCE_PATH, EDGE_BALANCE_PATH, SUMMARY_PATH)
+        for path in (
+            JUNCTIONS_PATH,
+            PIPES_PATH,
+            NODE_BALANCE_PATH,
+            EDGE_BALANCE_PATH,
+            SUMMARY_PATH,
+            COMPRESSORS_PATH,
+            EDGE_PARAMS_PATH,
+        )
         if not path.exists()
     ]
     if missing:
@@ -74,6 +84,8 @@ def _load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFra
         pd.read_parquet(NODE_BALANCE_PATH),
         pd.read_parquet(EDGE_BALANCE_PATH),
         pd.read_parquet(SUMMARY_PATH),
+        pd.read_parquet(COMPRESSORS_PATH),
+        pd.read_parquet(EDGE_PARAMS_PATH),
     )
 
 
@@ -131,10 +143,12 @@ def _build_case_frames(
     pipes_df: pd.DataFrame,
     node_balance_df: pd.DataFrame,
     edge_balance_df: pd.DataFrame,
+    compressors_df: pd.DataFrame,
+    edge_params_df: pd.DataFrame,
     month: pd.Timestamp,
     demand_mode: str,
     supply_mode: str,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     month_nodes = node_balance_df[
         pd.to_datetime(node_balance_df["fecha"]).dt.to_period("M").dt.to_timestamp() == month
     ].copy()
@@ -168,6 +182,25 @@ def _build_case_frames(
     case_junctions["source_supply_mm3_dia"] = case_junctions[
         "dispatched_supply_mm3_dia" if supply_mode == "dispatched" else "supply_mm3_dia_proxy"
     ].fillna(0.0)
+    compressor_summary = (
+        compressors_df[compressors_df["estado"].astype(str).str.lower() == "active"]
+        .groupby("node_id", dropna=False)
+        .agg(
+            compressor_count=("asset_id", "count"),
+            compressor_power_hp=("potencia_hp", "sum"),
+        )
+        .reset_index()
+    )
+    case_junctions = case_junctions.merge(
+        compressor_summary,
+        left_on="junction_id",
+        right_on="node_id",
+        how="left",
+    ).drop(columns=["node_id"], errors="ignore")
+    case_junctions["compressor_count"] = case_junctions["compressor_count"].fillna(0).astype(int)
+    case_junctions["compressor_power_hp"] = pd.to_numeric(
+        case_junctions["compressor_power_hp"], errors="coerce"
+    ).fillna(0.0)
 
     case_pipes = pipes_df.merge(
         month_edges[
@@ -184,14 +217,42 @@ def _build_case_frames(
         right_on="edge_id",
         how="left",
     )
+    case_pipes = case_pipes.merge(
+        edge_params_df[
+            [
+                "edge_id",
+                "effective_capacity_mm3_dia",
+                "effective_diameter_m",
+                "effective_length_km",
+                "active_loop_count",
+                "loop_capacity_increment_mm3_dia",
+            ]
+        ],
+        left_on="pipe_id",
+        right_on="edge_id",
+        how="left",
+        suffixes=("", "_param"),
+    )
     case_pipes["resolved_capacity_mm3_dia"] = case_pipes["resolved_capacity_mm3_dia"].fillna(
         pd.to_numeric(case_pipes.get("capacidad_mm3_dia_override"), errors="coerce")
+    )
+    case_pipes["resolved_capacity_mm3_dia"] = case_pipes["effective_capacity_mm3_dia"].fillna(
+        case_pipes["resolved_capacity_mm3_dia"]
     )
     case_pipes["diameter_m_proxy"] = pd.to_numeric(case_pipes.get("diameter_m_override"), errors="coerce").fillna(
         case_pipes["resolved_capacity_mm3_dia"].fillna(5.0).apply(_diameter_from_capacity)
     )
-    case_pipes["length_km_proxy"] = case_pipes["length_km_proxy"].fillna(1.0).clip(lower=1.0)
-    return case_junctions.reset_index(drop=True), case_pipes.reset_index(drop=True)
+    case_pipes["diameter_m_proxy"] = pd.to_numeric(case_pipes["effective_diameter_m"], errors="coerce").fillna(
+        case_pipes["diameter_m_proxy"]
+    )
+    case_pipes["length_km_proxy"] = pd.to_numeric(case_pipes["effective_length_km"], errors="coerce").fillna(
+        case_pipes["length_km_proxy"]
+    ).fillna(1.0).clip(lower=1.0)
+    case_pipes["active_loop_count"] = case_pipes["active_loop_count"].fillna(0).astype(int)
+    case_pipes["loop_capacity_increment_mm3_dia"] = pd.to_numeric(
+        case_pipes["loop_capacity_increment_mm3_dia"], errors="coerce"
+    ).fillna(0.0)
+    return case_junctions.reset_index(drop=True), case_pipes.reset_index(drop=True), compressor_summary.reset_index(drop=True)
 
 
 def _build_net(case_junctions: pd.DataFrame, case_pipes: pd.DataFrame, fluid: str):
@@ -240,14 +301,17 @@ def _build_net(case_junctions: pd.DataFrame, case_pipes: pd.DataFrame, fluid: st
     for component_id, component_nodes in case_junctions.groupby("component_id", dropna=False):
         if component_id < 0 or component_nodes.empty:
             continue
-        slack_row = component_nodes.sort_values(
-            ["source_supply_mm3_dia", "sink_demand_mm3_dia"], ascending=[False, False]
-        ).iloc[0]
+        prioritized = component_nodes.sort_values(
+            ["compressor_power_hp", "source_supply_mm3_dia", "sink_demand_mm3_dia"],
+            ascending=[False, False, False],
+        )
+        slack_row = prioritized.iloc[0]
         slack_node_id = str(slack_row["junction_id"])
+        pressure_bar = DEFAULT_PRESSURE_BAR + min(float(slack_row.get("compressor_power_hp", 0.0)) / 5000.0, 12.0)
         pp.create_ext_grid(
             net,
             junction=junction_idx_by_id[slack_node_id],
-            p_bar=DEFAULT_PRESSURE_BAR,
+            p_bar=pressure_bar,
             t_k=DEFAULT_TFLUID_K,
             type="pt",
             name=f"slack_component_{component_id}_{slack_row['junction_name']}",
@@ -291,6 +355,8 @@ def _summarize_case(
         "junction_count": int(len(case_junctions)),
         "pipe_count": int(len(case_pipes)),
         "component_count": int(case_junctions["component_id"].nunique()),
+        "compressor_node_count": int((case_junctions["compressor_count"] > 0).sum()),
+        "active_looped_pipe_count": int((case_pipes["active_loop_count"] > 0).sum()),
         "total_supply_mm3_dia": float(case_junctions["source_supply_mm3_dia"].sum()),
         "total_sink_demand_mm3_dia": float(case_junctions["sink_demand_mm3_dia"].sum()),
         "total_unmet_proxy_mm3_dia": float(case_junctions["unmet_withdrawal_mm3_dia"].fillna(0.0).sum()),
@@ -302,13 +368,23 @@ def _summarize_case(
 
 def main() -> None:
     args = _parse_args()
-    junctions_df, pipes_df, node_balance_df, edge_balance_df, summary_df = _load_inputs()
-    month = _select_month(summary_df, args.month)
-    case_junctions, case_pipes = _build_case_frames(
+    (
         junctions_df,
         pipes_df,
         node_balance_df,
         edge_balance_df,
+        summary_df,
+        compressors_df,
+        edge_params_df,
+    ) = _load_inputs()
+    month = _select_month(summary_df, args.month)
+    case_junctions, case_pipes, _compressor_summary = _build_case_frames(
+        junctions_df,
+        pipes_df,
+        node_balance_df,
+        edge_balance_df,
+        compressors_df,
+        edge_params_df,
         month,
         args.demand_mode,
         args.supply_mode,
