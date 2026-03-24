@@ -109,8 +109,10 @@ def _monthly_supply(production_df: pd.DataFrame) -> pd.DataFrame:
         .agg(supply_mm3_mes_proxy=("gas_no_convencional_mm3", "sum"))
         .reset_index()
     )
+    # Capitulo IV gas volumes are expressed in thousands of cubic meters by month.
+    # Convert to MMm3/d for consistency with the network views.
     monthly["supply_mm3_dia_proxy"] = (
-        monthly["supply_mm3_mes_proxy"] / monthly["fecha"].dt.days_in_month
+        (monthly["supply_mm3_mes_proxy"] * 1000.0) / monthly["fecha"].dt.days_in_month / 1_000_000.0
     )
     return monthly
 
@@ -238,7 +240,7 @@ def _build_node_exogenous(
         on="node_id",
         how="left",
     )
-    result["source"] = "derived_from_consumo_diario_and_pozos_no_convencional"
+    result["source"] = "derived_from_consumo_diario_and_capitulo_iv_non_conventional"
     return result.sort_values(["fecha", "node_id"]).reset_index(drop=True)
 
 

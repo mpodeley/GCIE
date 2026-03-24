@@ -889,7 +889,7 @@ def _render_network_html(payload: dict[str, Any]) -> str:
         <select id="network-month-select"></select>
         <select id="network-gasoducto"></select>
         <label class="check"><input type="checkbox" id="network-critical"> Stress only</label>
-        <label class="check"><input type="checkbox" id="network-show-sources" checked> Source Proxy</label>
+        <label class="check"><input type="checkbox" id="network-show-sources" checked> NC Source Proxy</label>
         <label class="check"><input type="checkbox" id="network-show-sinks" checked> Sink Proxy</label>
         <label class="check"><input type="checkbox" id="network-show-observed" checked> Observed Activity</label>
       </div>
@@ -903,7 +903,7 @@ def _render_network_html(payload: dict[str, Any]) -> str:
             <span class="u3">>= 100%</span>
             <span class="comp">Compresora</span>
             <span class="loop">Loop activo</span>
-            <span class="actual">Source Proxy</span>
+            <span class="actual">NC Source Proxy</span>
             <span class="pred">Sink Proxy</span>
             <span class="u0">Observed Activity</span>
           </div>
@@ -1227,7 +1227,7 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       document.getElementById('sink-total').textContent = fmtMm(totalSink);
       document.getElementById('balance-net').textContent = fmtMm(net);
       document.getElementById('balance-note').textContent =
-        `Proxy balance gap for ${{monthKey.slice(0, 7)}}: ${{fmtMm(net)}}. This should be read as a data/model reconciliation check, not as a closed physical balance.`;
+        `Proxy balance gap for ${{monthKey.slice(0, 7)}}: ${{fmtMm(net)}}. Supply here is non-conventional proxy only; demand is total system consumption, so this is not a closed physical balance.`;
     }}
 
     function renderNetworkHistory(edgeId) {{
@@ -1296,7 +1296,7 @@ def _render_network_html(payload: dict[str, Any]) -> str:
         <span>Node</span>
         <span>month: ${{monthKey.slice(0, 7)}}</span>
       `;
-      document.getElementById('network-metric-1-label').textContent = 'Source Proxy';
+      document.getElementById('network-metric-1-label').textContent = 'NC Source Proxy';
       document.getElementById('network-metric-2-label').textContent = 'Sink Proxy';
       document.getElementById('network-metric-4-label').textContent = 'Net Proxy';
       document.getElementById('network-util').textContent = fmtMm(exogenous?.supply_mm3_dia_proxy);

@@ -60,7 +60,7 @@ def download_workbook() -> bytes:
 
 def parse_consumption(workbook_bytes: bytes) -> pd.DataFrame:
     raw = pd.read_excel(io.BytesIO(workbook_bytes), sheet_name="TipoUsuario", header=None)
-    top_headers = raw.iloc[12].tolist()
+    top_headers = pd.Series(raw.iloc[12]).ffill().tolist()
     sub_headers = raw.iloc[13].tolist()
 
     rows = []
