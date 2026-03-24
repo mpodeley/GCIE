@@ -448,7 +448,10 @@ def _load_network_summary() -> dict[str, Any]:
               observed_outflow_mm3_dia,
               observed_throughput_mm3_dia,
               supply_mm3_dia_proxy,
+              supply_conventional_mm3_dia_proxy,
               supply_non_conventional_mm3_dia_proxy,
+              supply_import_bolivia_mm3_dia_proxy,
+              supply_lng_mm3_dia_proxy,
               supply_method,
               withdrawal_mm3_dia_proxy,
               exogenous_net_mm3_dia_proxy,
@@ -962,7 +965,10 @@ def _render_network_html(payload: dict[str, Any]) -> str:
               <tbody id="sink-table"></tbody>
               <tfoot>
                 <tr><th>Total</th><th id="sink-total"></th></tr>
+                <tr><th>Conv Source</th><th id="source-conv-total"></th></tr>
                 <tr><th>NC Source</th><th id="source-nc-total"></th></tr>
+                <tr><th>Bolivia Import</th><th id="source-bolivia-total"></th></tr>
+                <tr><th>LNG</th><th id="source-lng-total"></th></tr>
                 <tr><th>Net Proxy</th><th id="balance-net"></th></tr>
               </tfoot>
             </table>
@@ -1229,12 +1235,18 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       }});
 
       const totalSource = sources.reduce((acc, item) => acc + (item.supply_mm3_dia_proxy || 0), 0);
+      const totalConvSource = sources.reduce((acc, item) => acc + (item.supply_conventional_mm3_dia_proxy || 0), 0);
       const totalNcSource = sources.reduce((acc, item) => acc + (item.supply_non_conventional_mm3_dia_proxy || 0), 0);
+      const totalBoliviaSource = sources.reduce((acc, item) => acc + (item.supply_import_bolivia_mm3_dia_proxy || 0), 0);
+      const totalLngSource = sources.reduce((acc, item) => acc + (item.supply_lng_mm3_dia_proxy || 0), 0);
       const totalSink = sinks.reduce((acc, item) => acc + (item.withdrawal_mm3_dia_proxy || 0), 0);
       const net = totalSource - totalSink;
       document.getElementById('source-total').textContent = fmtMm(totalSource);
       document.getElementById('sink-total').textContent = fmtMm(totalSink);
+      document.getElementById('source-conv-total').textContent = fmtMm(totalConvSource);
       document.getElementById('source-nc-total').textContent = fmtMm(totalNcSource);
+      document.getElementById('source-bolivia-total').textContent = fmtMm(totalBoliviaSource);
+      document.getElementById('source-lng-total').textContent = fmtMm(totalLngSource);
       document.getElementById('balance-net').textContent = fmtMm(net);
       document.getElementById('balance-note').textContent =
         `Proxy balance gap for ${{monthKey.slice(0, 7)}}: ${{fmtMm(net)}}. In F22b the total source proxy is allocated across observed source nodes, so this balance should stay near zero apart from rounding.`;

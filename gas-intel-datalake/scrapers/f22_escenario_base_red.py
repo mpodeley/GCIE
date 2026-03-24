@@ -327,12 +327,6 @@ def _build_node_exogenous(
             "withdrawal_mm3_dia_proxy": 0.0,
         }
     )
-    result["exogenous_net_mm3_dia_proxy"] = (
-        result["supply_mm3_dia_proxy"] - result["withdrawal_mm3_dia_proxy"]
-    )
-    result["balancing_gap_mm3_dia_proxy"] = (
-        result["exogenous_net_mm3_dia_proxy"] - result["observed_net_flow_mm3_dia"]
-    )
     result = result.merge(
         nodes_df[["node_id", "nombre", "latitud", "longitud"]],
         on="node_id",
@@ -341,6 +335,38 @@ def _build_node_exogenous(
         roles_df[["node_id", "role_proxy"]],
         on="node_id",
         how="left",
+    )
+    result["exogenous_net_mm3_dia_proxy"] = (
+        result["supply_mm3_dia_proxy"] - result["withdrawal_mm3_dia_proxy"]
+    )
+    result["supply_import_bolivia_mm3_dia_proxy"] = result.apply(
+        lambda row: float(row["supply_mm3_dia_proxy"]) if str(row["nombre"]) == "Bolivia" else 0.0,
+        axis=1,
+    )
+    result["supply_lng_mm3_dia_proxy"] = result.apply(
+        lambda row: float(row["supply_mm3_dia_proxy"]) if str(row["nombre"]) == "GNL Escobar" else 0.0,
+        axis=1,
+    )
+    result["supply_non_conventional_mm3_dia_proxy"] = result.apply(
+        lambda row: min(
+            float(row["supply_non_conventional_mm3_dia_proxy"]),
+            max(
+                float(row["supply_mm3_dia_proxy"])
+                - float(row["supply_import_bolivia_mm3_dia_proxy"])
+                - float(row["supply_lng_mm3_dia_proxy"]),
+                0.0,
+            ),
+        ),
+        axis=1,
+    )
+    result["supply_conventional_mm3_dia_proxy"] = (
+        result["supply_mm3_dia_proxy"]
+        - result["supply_import_bolivia_mm3_dia_proxy"]
+        - result["supply_lng_mm3_dia_proxy"]
+        - result["supply_non_conventional_mm3_dia_proxy"]
+    ).clip(lower=0.0)
+    result["balancing_gap_mm3_dia_proxy"] = (
+        result["exogenous_net_mm3_dia_proxy"] - result["observed_net_flow_mm3_dia"]
     )
     result["source"] = "balanced_total_system_consumption_allocated_by_observed_source_shares"
     return result.sort_values(["fecha", "node_id"]).reset_index(drop=True)
@@ -351,6 +377,10 @@ def _build_scenario_balance(node_exogenous_df: pd.DataFrame) -> pd.DataFrame:
         node_exogenous_df.groupby("fecha", dropna=False)
         .agg(
             total_supply_mm3_dia_proxy=("supply_mm3_dia_proxy", "sum"),
+            total_supply_conventional_mm3_dia_proxy=("supply_conventional_mm3_dia_proxy", "sum"),
+            total_supply_non_conventional_mm3_dia_proxy=("supply_non_conventional_mm3_dia_proxy", "sum"),
+            total_supply_import_bolivia_mm3_dia_proxy=("supply_import_bolivia_mm3_dia_proxy", "sum"),
+            total_supply_lng_mm3_dia_proxy=("supply_lng_mm3_dia_proxy", "sum"),
             total_withdrawal_mm3_dia_proxy=("withdrawal_mm3_dia_proxy", "sum"),
             total_observed_net_flow_mm3_dia=("observed_net_flow_mm3_dia", "sum"),
             total_observed_throughput_mm3_dia=("observed_throughput_mm3_dia", "sum"),
