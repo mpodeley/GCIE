@@ -35,6 +35,8 @@ OPTIONAL_TABLE_SOURCES = {
     "red_tramo_metricas_mensuales": "red_tramo_metricas_mensuales.parquet",
     "red_nodo_metricas_mensuales": "red_nodo_metricas_mensuales.parquet",
     "red_nodo_roles_proxy": "red_nodo_roles_proxy.parquet",
+    "red_nodo_exogenos_mensuales": "red_nodo_exogenos_mensuales.parquet",
+    "red_balance_escenario_mensual": "red_balance_escenario_mensual.parquet",
 }
 
 
