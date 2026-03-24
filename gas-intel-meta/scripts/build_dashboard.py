@@ -436,6 +436,20 @@ def _load_network_summary() -> dict[str, Any]:
             ORDER BY m.fecha, e.gasoducto, e.ruta
             """
         ).fetchdf()
+        node_exogenous_df = conn.execute(
+            """
+            SELECT
+              fecha,
+              node_id,
+              nombre,
+              role_proxy,
+              supply_mm3_dia_proxy,
+              withdrawal_mm3_dia_proxy,
+              exogenous_net_mm3_dia_proxy
+            FROM red_nodo_exogenos_mensuales
+            ORDER BY fecha, nombre
+            """
+        ).fetchdf()
         diagnostics_df = conn.execute(
             """
             SELECT entity_type, entity_id, severity, issue_type, issue_detail
@@ -495,6 +509,13 @@ def _load_network_summary() -> dict[str, Any]:
         }
         for row in edge_snapshots_df.to_dict("records")
     ]
+    node_exogenous = [
+        {
+            **row,
+            "fecha": str(row["fecha"]),
+        }
+        for row in node_exogenous_df.to_dict("records")
+    ]
     diagnostics = diagnostics_df.to_dict("records")
     gasoductos = sorted({str(edge["gasoducto"]) for edge in edges})
     available_months = sorted({str(row["fecha"]) for row in edge_snapshots})
@@ -538,6 +559,7 @@ def _load_network_summary() -> dict[str, Any]:
         "loops": loops_df.to_dict("records"),
         "available_months": available_months,
         "edge_snapshots": edge_snapshots,
+        "node_exogenous": node_exogenous,
         "diagnostics": diagnostics[:12],
         "gasoductos": gasoductos,
         "solver_summary": solver_summary,
@@ -844,13 +866,15 @@ def _render_html(payload: dict[str, Any]) -> str:
       <div class="toolbar">
         <div style="flex:1 1 320px">
           <h2>Canonical Network</h2>
-          <p>Observed ENARGAS flows plus canonical overrides, compresoras, loops, and latest operational stress by corridor.</p>
+            <p>Observed ENARGAS flows plus canonical overrides, compresoras, loops, and latest operational stress by corridor.</p>
         </div>
         <span class="badge" id="network-month-badge"></span>
         <button type="button" id="network-play">Play</button>
         <select id="network-month-select"></select>
         <select id="network-gasoducto"></select>
         <label class="check"><input type="checkbox" id="network-critical"> Stress only</label>
+        <label class="check"><input type="checkbox" id="network-show-sources" checked> Sources</label>
+        <label class="check"><input type="checkbox" id="network-show-sinks" checked> Sinks</label>
       </div>
       <div class="network-shell">
         <div>
@@ -862,6 +886,8 @@ def _render_html(payload: dict[str, Any]) -> str:
             <span class="u3">>= 100%</span>
             <span class="comp">Compresora</span>
             <span class="loop">Loop activo</span>
+            <span class="actual">Source bubble</span>
+            <span class="pred">Sink bubble</span>
           </div>
         </div>
         <div class="stack" style="margin-bottom:0">
@@ -1218,6 +1244,8 @@ def _render_html(payload: dict[str, Any]) -> str:
     const networkMap = document.getElementById('network-map');
     const networkGasoducto = document.getElementById('network-gasoducto');
     const networkCritical = document.getElementById('network-critical');
+    const networkShowSources = document.getElementById('network-show-sources');
+    const networkShowSinks = document.getElementById('network-show-sinks');
     const networkMonthSelect = document.getElementById('network-month-select');
     const networkPlayButton = document.getElementById('network-play');
     const networkMonthBadge = document.getElementById('network-month-badge');
@@ -1237,6 +1265,12 @@ def _render_html(payload: dict[str, Any]) -> str:
       const history = routeHistoryMap.get(item.edge_id) || [];
       history.push(item);
       routeHistoryMap.set(item.edge_id, history);
+    }});
+    const nodeExogenousMap = new Map();
+    data.network.node_exogenous.forEach(item => {{
+      const bucket = nodeExogenousMap.get(item.fecha) || [];
+      bucket.push(item);
+      nodeExogenousMap.set(item.fecha, bucket);
     }});
 
     function utilizationColor(utilization) {{
@@ -1429,6 +1463,9 @@ def _render_html(payload: dict[str, Any]) -> str:
       }});
       const visibleNodes = projectedNetwork.nodes.filter(node => nodeIds.has(node.node_id));
       const maxFlow = Math.max(...visibleEdges.map(edge => edge.observed_flow_mm3_dia || 0), 1);
+      const exogenousPoints = (nodeExogenousMap.get(selectedMonth) || []).filter(item => nodeIds.has(item.node_id));
+      const maxSource = Math.max(...exogenousPoints.map(item => item.supply_mm3_dia_proxy || 0), 1);
+      const maxSink = Math.max(...exogenousPoints.map(item => item.withdrawal_mm3_dia_proxy || 0), 1);
 
       const grid = Array.from({{ length: 8 }}, (_, idx) => {{
         const x = 70 + idx * 110;
@@ -1471,6 +1508,24 @@ def _render_html(payload: dict[str, Any]) -> str:
           : `<circle cx="${{node.x}}" cy="${{node.y}}" r="${{radius}}" fill="${{fill}}" stroke="${{stroke}}" stroke-width="1.4" />`;
         return `${{square}}${{label}}`;
       }}).join('');
+      const exogenousMarkup = exogenousPoints.map(item => {{
+        const node = projectedNetwork.nodes.find(candidate => candidate.node_id === item.node_id);
+        if (!node) return '';
+        const parts = [];
+        if (networkShowSources.checked && (item.supply_mm3_dia_proxy || 0) > 0) {{
+          const radius = 4 + Math.sqrt((item.supply_mm3_dia_proxy || 0) / maxSource) * 24;
+          parts.push(`
+            <circle cx="${{node.x}}" cy="${{node.y}}" r="${{radius.toFixed(2)}}" fill="rgba(31,111,95,0.18)" stroke="var(--accent)" stroke-width="1.6" />
+          `);
+        }}
+        if (networkShowSinks.checked && (item.withdrawal_mm3_dia_proxy || 0) > 0) {{
+          const radius = 4 + Math.sqrt((item.withdrawal_mm3_dia_proxy || 0) / maxSink) * 24;
+          parts.push(`
+            <circle cx="${{node.x}}" cy="${{node.y}}" r="${{radius.toFixed(2)}}" fill="rgba(184,92,56,0.16)" stroke="var(--accent-2)" stroke-width="1.6" stroke-dasharray="5 4" />
+          `);
+        }}
+        return parts.join('');
+      }}).join('');
 
       networkMap.innerHTML = `
         <rect x="0" y="0" width="920" height="760" rx="18" class="map-ocean" />
@@ -1478,6 +1533,7 @@ def _render_html(payload: dict[str, Any]) -> str:
         <path d="${{projectedNetwork.countryPath}}" class="country-fill" />
         <rect x="32" y="32" width="856" height="696" rx="26" class="map-frame" />
         <path d="${{projectedNetwork.countryPath}}" class="country-outline" />
+        ${{exogenousMarkup}}
         ${{edgesMarkup}}
         ${{nodesMarkup}}
       `;
@@ -1538,6 +1594,8 @@ def _render_html(payload: dict[str, Any]) -> str:
     segmentSelect.addEventListener('change', event => renderChart(event.target.value));
     networkGasoducto.addEventListener('change', renderNetwork);
     networkCritical.addEventListener('change', renderNetwork);
+    networkShowSources.addEventListener('change', renderNetwork);
+    networkShowSinks.addEventListener('change', renderNetwork);
     networkMonthSelect.addEventListener('change', renderNetwork);
     networkPlayButton.addEventListener('click', toggleNetworkPlayback);
     renderDiagnostics();
