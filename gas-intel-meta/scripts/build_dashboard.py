@@ -37,8 +37,37 @@ def _load_forecast_summary() -> dict[str, Any]:
     validation_lookup = {
         (str(row["fecha"]), row["segmento"]): row for row in dataset["validation_rows"]
     }
+    prediction_lookup = {
+        (str(row["fecha"]), row["segmento"]): row for row in predictions
+    }
     segment_errors: dict[str, list[float]] = {}
     segment_series: dict[str, list[dict[str, Any]]] = {}
+    history_series: dict[str, list[dict[str, Any]]] = {}
+    driver_series: dict[str, list[dict[str, Any]]] = {}
+
+    all_rows = dataset["train_rows"] + dataset["validation_rows"]
+    for row in all_rows:
+        segment = row["segmento"]
+        key = (str(row["fecha"]), segment)
+        prediction = prediction_lookup.get(key)
+        history_series.setdefault(segment, []).append(
+            {
+                "fecha": str(row["fecha"]),
+                "actual_volume": int(row["actual_volume"]),
+                "predicted_volume": None if prediction is None else int(prediction["predicted_volume"]),
+                "is_validation": key in validation_lookup,
+            }
+        )
+        if row["hdd"] is not None:
+            driver_series.setdefault(segment, []).append(
+                {
+                    "fecha": str(row["fecha"]),
+                    "hdd": round(float(row["hdd"]), 2),
+                    "actual_volume": int(row["actual_volume"]),
+                    "is_validation": key in validation_lookup,
+                }
+            )
+
     for row in predictions:
         actual = float(row["actual_volume"])
         predicted = float(row["predicted_volume"])
@@ -92,6 +121,20 @@ def _load_forecast_summary() -> dict[str, Any]:
         }
         for segment, points in sorted(segment_series.items())
     ]
+    history_segments = [
+        {
+            "segmento": segment,
+            "points": sorted(points, key=lambda item: item["fecha"])[-24:],
+        }
+        for segment, points in sorted(history_series.items())
+    ]
+    driver_segments = [
+        {
+            "segmento": segment,
+            "points": sorted(points, key=lambda item: item["fecha"])[-36:],
+        }
+        for segment, points in sorted(driver_series.items())
+    ]
 
     return {
         "hypothesis": result["hypothesis"],
@@ -103,6 +146,8 @@ def _load_forecast_summary() -> dict[str, Any]:
         "by_segment": by_segment,
         "recent_predictions": recent_predictions,
         "chart_segments": chart_segments,
+        "history_segments": history_segments,
+        "driver_segments": driver_segments,
     }
 
 
@@ -214,6 +259,12 @@ def _render_html(payload: dict[str, Any]) -> str:
       grid-template-columns: 1.5fr 0.8fr;
       align-items: start;
     }}
+    .three {{
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 1fr 1fr;
+      margin-bottom: 24px;
+    }}
     .toolbar {{
       display: flex;
       gap: 10px;
@@ -280,7 +331,7 @@ def _render_html(payload: dict[str, Any]) -> str:
       font-weight: 700;
     }}
     @media (max-width: 900px) {{
-      .hero, .grid, .two, .chart-shell, .explain-grid {{ grid-template-columns: 1fr; }}
+      .hero, .grid, .two, .three, .chart-shell, .explain-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -331,6 +382,19 @@ def _render_html(payload: dict[str, Any]) -> str:
             <div class="mono" id="story-lags" style="margin-top:8px"></div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section class="three">
+      <div class="panel">
+        <h2>Recent History</h2>
+        <p class="small">Last 24 observations for the selected segment. Validation months include the model overlay.</p>
+        <svg class="viz" id="history-chart" viewBox="0 0 720 320" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="panel">
+        <h2>Driver View</h2>
+        <p class="small">Observed volume vs HDD for the selected segment. Validation points are highlighted.</p>
+        <svg class="viz" id="driver-chart" viewBox="0 0 720 320" preserveAspectRatio="none"></svg>
       </div>
     </section>
 
@@ -428,6 +492,8 @@ def _render_html(payload: dict[str, Any]) -> str:
 
     const segmentSelect = document.getElementById('segment-select');
     const chart = document.getElementById('forecast-chart');
+    const historyChart = document.getElementById('history-chart');
+    const driverChart = document.getElementById('driver-chart');
 
     data.forecast.chart_segments.forEach((item, idx) => {{
       const option = document.createElement('option');
@@ -451,6 +517,80 @@ def _render_html(payload: dict[str, Any]) -> str:
       document.getElementById('story-lags').textContent = Object.entries(point.lag_values)
         .map(([key, value]) => `${{key}}: ${{fmtShort(value)}}`)
         .join(' | ');
+    }}
+
+    function renderHistory(segment) {{
+      const segmentData = data.forecast.history_segments.find(item => item.segmento === segment);
+      if (!segmentData) return;
+      const points = segmentData.points;
+      const maxY = Math.max(...points.map(p => p.actual_volume), ...points.map(p => p.predicted_volume || 0)) * 1.1;
+      const left = 52, top = 20, width = 630, height = 240, bottom = top + height;
+      const xMap = idx => left + (points.length === 1 ? width / 2 : (idx * width) / (points.length - 1));
+      const yMap = value => bottom - (value / maxY) * height;
+      const grid = [0, 0.25, 0.5, 0.75, 1].map(tick => {{
+        const y = top + height * tick;
+        const value = maxY * (1 - tick);
+        return `
+          <line x1="${{left}}" y1="${{y}}" x2="${{left + width}}" y2="${{y}}" stroke="rgba(106,114,128,0.16)" />
+          <text x="8" y="${{y + 4}}" fill="#6a7280" font-size="11">${{fmtShort(value)}}</text>
+        `;
+      }}).join('');
+      const actualPath = linePath(points.map(p => p.actual_volume), xMap, yMap);
+      const predPoints = points.filter(p => p.predicted_volume != null);
+      const predPath = predPoints.length
+        ? linePath(predPoints.map(p => p.predicted_volume), idx => xMap(points.findIndex(src => src.fecha === predPoints[idx].fecha)), yMap)
+        : '';
+      const xLabels = points.filter((_, idx) => idx % Math.ceil(points.length / 6) === 0 || idx === points.length - 1)
+        .map((point, idx) => {{
+          const realIdx = points.findIndex(src => src.fecha === point.fecha);
+          return `<text x="${{xMap(realIdx)}}" y="${{bottom + 24}}" text-anchor="middle" fill="#6a7280" font-size="11">${{point.fecha.slice(0, 7)}}</text>`;
+        }}).join('');
+      const dots = points.map((point, idx) => {{
+        const validationColor = point.is_validation ? "var(--accent-2)" : "var(--accent)";
+        const predDot = point.predicted_volume == null ? '' : `<circle cx="${{xMap(idx)}}" cy="${{yMap(point.predicted_volume)}}" r="4" fill="var(--accent-2)" />`;
+        return `<circle cx="${{xMap(idx)}}" cy="${{yMap(point.actual_volume)}}" r="4" fill="${{validationColor}}" />${{predDot}}`;
+      }}).join('');
+      historyChart.innerHTML = `
+        ${{grid}}
+        <path d="${{actualPath}}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" />
+        ${{predPath ? `<path d="${{predPath}}" fill="none" stroke="var(--accent-2)" stroke-width="3" stroke-dasharray="6 6" stroke-linecap="round" />` : ''}}
+        ${{dots}}
+        ${{xLabels}}
+      `;
+    }}
+
+    function renderDrivers(segment) {{
+      const segmentData = data.forecast.driver_segments.find(item => item.segmento === segment);
+      if (!segmentData) return;
+      const points = segmentData.points;
+      const maxX = Math.max(...points.map(p => p.hdd), 1);
+      const maxY = Math.max(...points.map(p => p.actual_volume)) * 1.1;
+      const left = 52, top = 20, width = 630, height = 240, bottom = top + height;
+      const xMap = value => left + (value / maxX) * width;
+      const yMap = value => bottom - (value / maxY) * height;
+      const grid = [0, 0.25, 0.5, 0.75, 1].map(tick => {{
+        const y = top + height * tick;
+        const value = maxY * (1 - tick);
+        return `
+          <line x1="${{left}}" y1="${{y}}" x2="${{left + width}}" y2="${{y}}" stroke="rgba(106,114,128,0.16)" />
+          <text x="8" y="${{y + 4}}" fill="#6a7280" font-size="11">${{fmtShort(value)}}</text>
+        `;
+      }}).join('');
+      const xTicks = [0, 0.25, 0.5, 0.75, 1].map(tick => {{
+        const value = maxX * tick;
+        const x = left + width * tick;
+        return `<text x="${{x}}" y="${{bottom + 24}}" text-anchor="middle" fill="#6a7280" font-size="11">${{value.toFixed(1)}}</text>`;
+      }}).join('');
+      const dots = points.map(point => `
+        <circle cx="${{xMap(point.hdd)}}" cy="${{yMap(point.actual_volume)}}" r="5" fill="${{point.is_validation ? 'var(--accent-2)' : 'var(--accent)'}}" fill-opacity="0.82" />
+      `).join('');
+      driverChart.innerHTML = `
+        ${{grid}}
+        <text x="8" y="16" fill="#6a7280" font-size="11">Volume</text>
+        <text x="${{left + width - 20}}" y="${{bottom + 24}}" fill="#6a7280" font-size="11">HDD</text>
+        ${{dots}}
+        ${{xTicks}}
+      `;
     }}
 
     function renderChart(segment) {{
@@ -493,6 +633,8 @@ def _render_html(payload: dict[str, Any]) -> str:
       `;
 
       renderStory(points[points.length - 1]);
+      renderHistory(segment);
+      renderDrivers(segment);
     }}
 
     segmentSelect.addEventListener('change', event => renderChart(event.target.value));
