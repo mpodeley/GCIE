@@ -187,8 +187,8 @@ def _build_case_frames(
     case_pipes["resolved_capacity_mm3_dia"] = case_pipes["resolved_capacity_mm3_dia"].fillna(
         pd.to_numeric(case_pipes.get("capacidad_mm3_dia_override"), errors="coerce")
     )
-    case_pipes["diameter_m_proxy"] = case_pipes["resolved_capacity_mm3_dia"].fillna(5.0).apply(
-        _diameter_from_capacity
+    case_pipes["diameter_m_proxy"] = pd.to_numeric(case_pipes.get("diameter_m_override"), errors="coerce").fillna(
+        case_pipes["resolved_capacity_mm3_dia"].fillna(5.0).apply(_diameter_from_capacity)
     )
     case_pipes["length_km_proxy"] = case_pipes["length_km_proxy"].fillna(1.0).clip(lower=1.0)
     return case_junctions.reset_index(drop=True), case_pipes.reset_index(drop=True)

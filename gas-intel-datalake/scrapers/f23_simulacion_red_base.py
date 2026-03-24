@@ -104,6 +104,8 @@ def _build_pandapipes_exports(nodes_df: pd.DataFrame, edges_df: pd.DataFrame) ->
             "latitud_destino",
             "longitud_destino",
             "capacidad_mm3_dia_override",
+            "diameter_m_override",
+            "length_km_override",
             "source_confidence",
             "topology_status",
             "source",
@@ -121,7 +123,10 @@ def _build_pandapipes_exports(nodes_df: pd.DataFrame, edges_df: pd.DataFrame) ->
         ** 0.5
         * 111.0
     )
-    pipes["diameter_m_assumed"] = pd.NA
+    pipes["length_km_proxy"] = pd.to_numeric(pipes["length_km_override"], errors="coerce").fillna(
+        pipes["length_km_proxy"]
+    )
+    pipes["diameter_m_assumed"] = pd.to_numeric(pipes["diameter_m_override"], errors="coerce")
     pipes["roughness_mm_assumed"] = pd.NA
     pipes["export_target"] = "pandapipes_pipe"
     return junctions.reset_index(drop=True), pipes.reset_index(drop=True)
