@@ -1,31 +1,30 @@
 # SP6 — Portfolio Optimizer
 
 ## Role
-AutoResearch engine. Selects optimal combination of clients + sourcing strategy maximizing total spread subject to transport capacity, risk diversification, seasonal balance, and supply availability constraints.
+Future optimization engine for client mix plus sourcing mix under physical and commercial constraints.
 
-## AutoResearch pattern — FILE RULES
-- data_pipeline.py — FIXED. DO NOT MODIFY.
-- model.py — THE ONLY FILE YOU CAN MODIFY.
-- evaluate.py — FIXED. DO NOT MODIFY.
-- program.md — Written by human only.
-- results.tsv — Append-only.
+## Current state
+Specification only. No live baseline yet.
+This engine should not be treated as ready until SP3-SP5 produce stable contracts.
 
-## Metric
-Sharpe-like ratio: Spread_total / Portfolio_volatility on 12-month backtest. Higher is better.
-Optimizes BOTH client portfolio AND sourcing mix (how much firm vs. spot, which basin/producer).
+## Intended objective
+Maximize portfolio quality under:
+- expected spread,
+- sourcing reliability,
+- transport deliverability,
+- seasonal balance,
+- concentration and downside risk.
 
-## Baseline model
-Convex optimization (scipy.optimize or cvxpy) with linear capacity constraints.
+## Dependency stance
+SP6 depends on real upstream outputs from:
+- SP1 demand
+- SP2 supply cost and deliverability
+- SP3 commercial pricing
+- SP4 risk
+- SP5 customer scoring
 
-## Research directions
-- Alternative objective functions
-- Provider concentration penalties
-- Greedy heuristics
-- Robust optimization (worst-case scenarios)
+## Design note
+The old version was too abstract about transport. The active interpretation should assume deliverability and corridor stress are first-class constraints, not a late penalty term.
 
-## Budget
-5 minutes per experiment. ~12 experiments/hour.
-
-## Dependencies (ALL UPSTREAM engines)
-All SP1-SP5 outputs required.
-DuckDB path: ../gas-intel-datalake/duckdb/gas_intel.duckdb
+## Implementation rule
+Do not rush implementation until the upstream engines have stable interfaces and metrics.

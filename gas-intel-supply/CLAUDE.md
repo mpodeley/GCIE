@@ -1,47 +1,40 @@
 # SP2 — Supply & Sourcing Engine
 
 ## Role
-AutoResearch engine. Models gas supply available for the commercializer: volume by basin/producer, expected acquisition price, libre/asociado mix evolution, spot market dynamics.
+Operational monthly acquisition-price baseline for the current GCIE snapshot.
+This engine is already live and should be treated as an iterative production baseline, not a blank research stub.
 
-## KEY BUSINESS INSIGHT — Gas Asociado Dynamic
-Vaca Muerta shale oil production is scaling fast (Bajada del Palo Oeste, La Amarga Chica, Rincón de Aranda). Each barrel of oil brings associated gas whose production decision is driven by oil economics, NOT gas economics. This gas enters the system at near-zero marginal cost (~0.3-0.8 USD/MMBtu, just processing + compression vs ~2-3 USD/MMBtu for free gas). This creates structural downward price pressure. The commercializer that models this dynamic first has a real sourcing advantage.
+## Current implementation
+- `data_pipeline.py` builds a monthly target from `precios_boca_pozo`
+- `model.py` contains the active supply-price baseline
+- `evaluate.py` computes validation MAE and appends experiments to `results.tsv`
 
-## AutoResearch pattern — FILE RULES
-- data_pipeline.py — FIXED. DO NOT MODIFY.
-- model.py — THE ONLY FILE YOU CAN MODIFY.
-- evaluate.py — FIXED. DO NOT MODIFY.
-- program.md — Written by human only. Read it before every session.
-- results.tsv — Append-only.
+## Current score
+Best known active baseline: `mae_usd_mmbtu = 0.29947537459945683`
 
-## Metric
-MAE of weighted average acquisition price ($/MMBtu) on 12-month backtest. Lower is better.
+## Data contract
+Current baseline uses:
+- `precios_boca_pozo`
+- `tipo_cambio`
+- `pozos_no_convencional`
 
-## Baseline model
-LightGBM predicting monthly average acquisition price based on:
-- Total gas production by basin
-- Gas asociado / gas libre ratio (KEY FEATURE)
-- SE reference price
-- Seasonality
-- VM petroleum production (proxy for future gas asociado)
-- Injection vs. transport capacity (congestion)
-- Historical MEGSA price
+Related context now available in SP0:
+- `gas_asociado_ratio`
+- transport utilization tables
+- canonical network, overrides and solver summaries
 
-## Research directions
-- Decompose acquisition price by contract type (firm vs. spot), optimize mix
-- Model aggregate supply curve by basin (free gas at price X, asociado at ~0 + processing)
-- Incorporate petroleum production forecasts as leading indicator of future asociado supply
-- Detect structural breaks (entry of new shale oil blocks)
-- Model supply seasonality (non-conventional gas winter decline vs. stable crude-asociado)
-- Transport congestion features affecting basin prices
+DuckDB path: `../gas-intel-datalake/duckdb/gas_intel.duckdb`
 
-## Sub-models
-1. Aggregate supply model: supply curve by basin separating libre vs. asociado
-2. Optimal purchase mix: given supply forecast, minimize acquisition cost subject to volume + reliability constraints
-3. Opportunity window detector: identifies periods of oversupply → spot prices below firm contract cost
+## What we learned already
+- A naive congestion adjustment did not improve the baseline and was intentionally not kept as active model.
+- The transport layer still matters, but likely as regime, basis or deliverability context rather than as a simple linear price feature.
+- Network realism is now a first-order dependency for the next SP2 upgrade.
 
-## Budget
-3 minutes per experiment. ~20 experiments/hour, ~160 overnight.
+## File rules
+- `program.md` is human strategy and should stay aligned with the actual project state.
+- `results.tsv` is append-only and should capture failed but informative transport experiments too.
 
-## Data Lake dependency
-Reads from: produccion_diaria, gas_asociado_ratio, precios_megsa, precios_boca_pozo, plan_gas, inyeccion_sistema, contratos_compra
-DuckDB path: ../gas-intel-datalake/duckdb/gas_intel.duckdb
+## Near-term research direction
+- improve the historical `gas_asociado_ratio` signal,
+- connect sourcing to canonical corridor stress,
+- move from plain acquisition price toward deliverable acquisition cost.

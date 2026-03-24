@@ -1,37 +1,25 @@
 # SP4 — Risk Engine
 
 ## Role
-AutoResearch engine. Quantifies operational and economic risk: demand risk (imbalances, consumption volatility) AND supply risk (producer failure, spot price spikes, transport cuts, gas asociado drop if crude prices fall).
+Future engine for operational and economic downside risk across demand, sourcing and network deliverability.
 
-## AutoResearch pattern — FILE RULES
-- data_pipeline.py — FIXED. DO NOT MODIFY.
-- model.py — THE ONLY FILE YOU CAN MODIFY.
-- evaluate.py — FIXED. DO NOT MODIFY.
-- program.md — Written by human only.
-- results.tsv — Append-only.
+## Current state
+Specification only. No live model yet.
 
-## Metric
-CVaR at 95% of total imbalance cost + hedging over 12-month Monte Carlo simulation (1000 scenarios). Lower is better.
+## Risk view that should drive the implementation
+- demand forecast error,
+- acquisition cost volatility,
+- transport congestion and cuts,
+- basis widening between origin and destination,
+- structural shifts in associated-gas supply,
+- policy or regulatory shocks.
 
-## Baseline model
-Monte Carlo simulation with calibrated distributions:
-- Demand risk: Demand Forecast historical errors, consumption volatility, cold snaps
-- Supply risk: acquisition cost variability, provider failure (contract interruption), spot MEGSA price spike, gas asociado ratio drop (if crude prices fall → less petroleum production → less gas asociado)
-- Transport risk: pipeline cut, seasonal congestion, failure to get interruptible capacity in winter
+## Dependency stance
+SP4 should sit on top of real outputs from SP1, SP2 and SP3, plus the network state from SP0.
 
-## Research directions
-- Alternative distributions (Student-t, mixture)
-- Cross-correlations supply-demand (cold snap = more demand + less free gas supply)
-- Specific stress scenarios (WTI drop to $50 = less gas asociado + upward pressure on prices)
-- Hedging strategies
-- Regulatory tail risk (Plan Gas.Ar changes)
+## Design note
+The transport piece is no longer optional.
+Given the current project direction, winter bottlenecks and corridor failure modes should be explicit state variables, not just scenario labels.
 
-## Budget
-5 minutes per experiment (Monte Carlo is expensive). ~12 experiments/hour, ~96 overnight.
-
-## Dependencies (UPSTREAM)
-- Demand Forecast error distributions
-- Supply Engine cost variability
-- Pricing Engine outputs
-- Data Lake: capacidad_transporte
-DuckDB path: ../gas-intel-datalake/duckdb/gas_intel.duckdb
+## Implementation rule
+Defer implementation until SP3 exists, unless a narrow transport-risk prototype becomes immediately useful.

@@ -1,39 +1,37 @@
 # SP1 — Demand Forecast Engine
 
 ## Role
-AutoResearch engine. Predicts gas consumption by segment, zone, and time horizon.
+Operational monthly demand forecast baseline for the current GCIE snapshot.
+The focus today is not generic AutoResearch exploration but improving a working baseline that already runs end-to-end.
 
-## AutoResearch pattern — FILE RULES
-- data_pipeline.py — FIXED. DO NOT MODIFY. Loads snapshot from Data Lake, generates train/val/test splits, base feature engineering.
-- model.py — THE ONLY FILE YOU CAN MODIFY. Features, algorithm, hyperparameters, postprocessing.
-- evaluate.py — FIXED. DO NOT MODIFY. Runs model.py, calculates metric on validation set, returns score.
-- program.md — Written by human only. Read it before every session.
-- results.tsv — Append-only. Format: timestamp\thypothesis\tmetric_value\tdelta\tkept_discarded
+## Current implementation
+- `data_pipeline.py` builds monthly demand features from `consumo_diario`, `clima` and `calendario`
+- `model.py` contains the active seasonal baseline
+- `evaluate.py` computes `weighted_mape` on the latest validation window
+- `results.tsv` records experiments and active scores
 
-## Metric
-MAPE weighted by volume on validation set (last 3 months). Lower is better.
-Formula: sum(|actual - predicted| / actual * volume) / sum(volume)
+## Current score
+Best known active baseline: `weighted_mape = 0.15378441199363313`
 
-## Baseline model
-LightGBM with: temperature, day_of_week, month, HDD/CDD, consumption lags (7/14/28 days), segment.
+## Data contract
+Reads from:
+- `consumo_diario`
+- `clima`
+- `calendario`
 
-## Research directions (see program.md for current strategy)
-- Temperature×segment interaction features
-- Per-segment models vs. unified model
-- Longer lag windows (60, 90 days)
-- XGBoost, CatBoost alternatives
-- Cyclic encoding for temporal features
-- Trend decomposition features
-- NEVER: data leakage, look-ahead bias
+DuckDB path: `../gas-intel-datalake/duckdb/gas_intel.duckdb`
 
-## Budget
-3 minutes per experiment. ~20 experiments/hour, ~160 overnight.
+## What matters now
+- Cadence is effectively monthly in the current historical demand source.
+- Residential behavior is strongly seasonal and HDD-driven.
+- Transport congestion is not yet part of the active SP1 baseline, but it is conceptually relevant for deliverability and winter stress.
 
-## Data Lake dependency
-Reads from: consumo_diario, clima, calendario, clientes_proxy
-DuckDB path: ../gas-intel-datalake/duckdb/gas_intel.duckdb
+## File rules
+- `program.md` is human strategy, not agent scratch space.
+- `results.tsv` is append-only.
+- Prefer improving the existing baseline before swapping the whole modeling contract.
 
-## Branch strategy
-- main: best validated model
-- research/*: each overnight session gets its own branch
-- Human reviews results.tsv + git log each morning and decides what to merge
+## Near-term research direction
+- Better regime handling for winter months
+- Segment-specific structure once the baseline contract stabilizes
+- Later, add transport stress as a deliverability feature rather than as a naive linear control
