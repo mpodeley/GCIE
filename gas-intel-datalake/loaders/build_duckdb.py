@@ -33,6 +33,8 @@ OPTIONAL_TABLE_SOURCES = {
     "red_tramos": "red_tramos.parquet",
     "red_tramo_alias": "red_tramo_alias.parquet",
     "red_tramo_metricas_mensuales": "red_tramo_metricas_mensuales.parquet",
+    "red_nodo_metricas_mensuales": "red_nodo_metricas_mensuales.parquet",
+    "red_nodo_roles_proxy": "red_nodo_roles_proxy.parquet",
 }
 
 
