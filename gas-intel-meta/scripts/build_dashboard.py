@@ -172,6 +172,7 @@ def _load_datalake_summary() -> dict[str, Any]:
             "consumo_diario",
             "clima",
             "calendario",
+            "precios_boca_pozo",
             "tipo_cambio",
         ]:
             count, min_fecha, max_fecha = conn.execute(

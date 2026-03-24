@@ -23,6 +23,9 @@ TABLE_SOURCES = {
     "calendario": "calendario.parquet",
     "tipo_cambio": "tipo_cambio.parquet",
 }
+OPTIONAL_TABLE_SOURCES = {
+    "precios_boca_pozo": "precios_boca_pozo.parquet",
+}
 
 
 def _import_duckdb() -> Any:
@@ -48,6 +51,10 @@ def _resolve_sources() -> tuple[dict[str, Path], list[str]]:
         if path is None:
             missing.append(f"{table_name} ({pattern})")
         else:
+            resolved[table_name] = path
+    for table_name, pattern in OPTIONAL_TABLE_SOURCES.items():
+        path = _latest_match(pattern)
+        if path is not None:
             resolved[table_name] = path
     return resolved, missing
 
