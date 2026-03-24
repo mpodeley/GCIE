@@ -29,6 +29,10 @@ OPTIONAL_TABLE_SOURCES = {
     "transporte_flujo_mensual": "transporte_flujo_mensual.parquet",
     "transporte_capacidad_firme": "transporte_capacidad_firme.parquet",
     "transporte_utilizacion_mensual": "transporte_utilizacion_mensual.parquet",
+    "red_nodos": "red_nodos.parquet",
+    "red_tramos": "red_tramos.parquet",
+    "red_tramo_alias": "red_tramo_alias.parquet",
+    "red_tramo_metricas_mensuales": "red_tramo_metricas_mensuales.parquet",
 }
 
 
