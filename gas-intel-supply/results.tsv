@@ -1,1 +1,4 @@
 timestamp	hypothesis	metric_value	delta_vs_prev	kept
+2026-03-24T15:46:29-03:00	Seasonal supply price blend with FX and unconventional output adjustments	0.29947537459945683		kept
+2026-03-24T15:46:46-03:00	Seasonal supply price blend with FX and unconventional output adjustments	0.3273769403334452	0.027901565733988387	discarded
+2026-03-24T15:46:58-03:00	Seasonal supply price blend with FX and unconventional output adjustments	0.29947537459945683	-0.027901565733988387	kept
