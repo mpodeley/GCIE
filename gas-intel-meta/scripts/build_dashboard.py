@@ -320,18 +320,30 @@ def _load_network_summary() -> dict[str, Any]:
               p.effective_diameter_m,
               p.effective_length_km,
               COALESCE(p.active_loop_count, 0) AS active_loop_count,
-              COALESCE(p.loop_capacity_increment_mm3_dia, 0) AS loop_capacity_increment_mm3_dia,
+              COALESCE(p.loop_capacity_increment_mm3_dia, 0) AS loop_capacity_increment_mm3_dia
+            FROM red_tramos_canonica e
+            LEFT JOIN red_tramos_parametros_canonica p USING(edge_id)
+            WHERE e.is_active
+            ORDER BY e.gasoducto, e.ruta
+            """
+        ).fetchdf()
+        edge_snapshots_df = conn.execute(
+            """
+            SELECT
+              m.fecha,
+              e.edge_id,
+              e.ruta,
+              e.gasoducto,
+              e.origen,
+              e.destino,
               COALESCE(m.caudal_mm3_dia, 0) AS observed_flow_mm3_dia,
               m.capacidad_mm3_dia AS observed_capacity_mm3_dia,
               m.utilization_ratio AS observed_utilization_ratio
-            FROM red_tramos_canonica e
-            LEFT JOIN red_tramos_parametros_canonica p USING(edge_id)
-            LEFT JOIN red_tramo_metricas_mensuales m
-              ON e.edge_id = m.edge_id AND m.fecha = ?
+            FROM red_tramo_metricas_mensuales m
+            INNER JOIN red_tramos_canonica e USING(edge_id)
             WHERE e.is_active
-            ORDER BY e.gasoducto, e.ruta
-            """,
-            [latest_observed_month],
+            ORDER BY m.fecha, e.gasoducto, e.ruta
+            """
         ).fetchdf()
         diagnostics_df = conn.execute(
             """
@@ -385,8 +397,16 @@ def _load_network_summary() -> dict[str, Any]:
         )
 
     edges = edges_df.to_dict("records")
+    edge_snapshots = [
+        {
+            **row,
+            "fecha": str(row["fecha"]),
+        }
+        for row in edge_snapshots_df.to_dict("records")
+    ]
     diagnostics = diagnostics_df.to_dict("records")
     gasoductos = sorted({str(edge["gasoducto"]) for edge in edges})
+    available_months = sorted({str(row["fecha"]) for row in edge_snapshots})
     components = _compute_component_count(nodes, edges)
     active_loop_count = sum(1 for loop in loops_df.to_dict("records") if str(loop["estado"]).lower() == "active")
     error_count = sum(1 for row in diagnostics if row["severity"] == "error")
@@ -425,6 +445,8 @@ def _load_network_summary() -> dict[str, Any]:
         "edges": edges,
         "compressors": compressors_df.to_dict("records"),
         "loops": loops_df.to_dict("records"),
+        "available_months": available_months,
+        "edge_snapshots": edge_snapshots,
         "diagnostics": diagnostics[:12],
         "gasoductos": gasoductos,
         "solver_summary": solver_summary,
@@ -532,6 +554,15 @@ def _render_html(payload: dict[str, Any]) -> str:
       background: white;
       color: var(--ink);
       font: inherit;
+    }}
+    button {{
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 12px;
+      background: white;
+      color: var(--ink);
+      font: inherit;
+      cursor: pointer;
     }}
     .check {{
       display: inline-flex;
@@ -678,6 +709,8 @@ def _render_html(payload: dict[str, Any]) -> str:
           <p>Observed ENARGAS flows plus canonical overrides, compresoras, loops, and latest operational stress by corridor.</p>
         </div>
         <span class="badge" id="network-month-badge"></span>
+        <button type="button" id="network-play">Play</button>
+        <select id="network-month-select"></select>
         <select id="network-gasoducto"></select>
         <label class="check"><input type="checkbox" id="network-critical"> Stress only</label>
       </div>
@@ -712,6 +745,11 @@ def _render_html(payload: dict[str, Any]) -> str:
           <div class="explain-card">
             <div class="small">Most Stressed Routes</div>
             <div class="route-list" id="network-route-list" style="margin-top:10px"></div>
+          </div>
+          <div class="explain-card">
+            <div class="small">Route Timeline</div>
+            <p class="small">Flow and utilization by month for the selected route.</p>
+            <svg class="viz" id="network-history-chart" viewBox="0 0 520 220" preserveAspectRatio="none"></svg>
           </div>
           <div class="explain-card">
             <div class="small">Solver Snapshot</div>
@@ -1018,9 +1056,26 @@ def _render_html(payload: dict[str, Any]) -> str:
     const networkMap = document.getElementById('network-map');
     const networkGasoducto = document.getElementById('network-gasoducto');
     const networkCritical = document.getElementById('network-critical');
+    const networkMonthSelect = document.getElementById('network-month-select');
+    const networkPlayButton = document.getElementById('network-play');
     const networkMonthBadge = document.getElementById('network-month-badge');
     const networkRouteList = document.getElementById('network-route-list');
+    const networkHistoryChart = document.getElementById('network-history-chart');
     let selectedEdgeId = null;
+    let isPlayingNetwork = false;
+    let networkTimerId = null;
+
+    const edgeSnapshotMap = new Map();
+    data.network.edge_snapshots.forEach(item => {{
+      const key = `${{item.fecha}}|${{item.edge_id}}`;
+      edgeSnapshotMap.set(key, item);
+    }});
+    const routeHistoryMap = new Map();
+    data.network.edge_snapshots.forEach(item => {{
+      const history = routeHistoryMap.get(item.edge_id) || [];
+      history.push(item);
+      routeHistoryMap.set(item.edge_id, history);
+    }});
 
     function utilizationColor(utilization) {{
       if (utilization == null) return '#4b648b';
@@ -1064,6 +1119,13 @@ def _render_html(payload: dict[str, Any]) -> str:
     }}
 
     const projectedNetwork = projectNetwork(data.network.nodes, data.network.edges);
+    data.network.available_months.forEach((month, idx) => {{
+      const option = document.createElement('option');
+      option.value = month;
+      option.textContent = month.slice(0, 7);
+      if (month === data.network.overview.latest_observed_month) option.selected = true;
+      networkMonthSelect.appendChild(option);
+    }});
     data.network.gasoductos.forEach((gasoducto, idx) => {{
       const option = document.createElement('option');
       option.value = gasoducto;
@@ -1076,7 +1138,7 @@ def _render_html(payload: dict[str, Any]) -> str:
     }} else {{
       networkGasoducto.insertAdjacentHTML('afterbegin', '<option value="Todos">Todos</option>');
     }}
-    networkMonthBadge.textContent = `Observed month: ${{(data.network.overview.latest_observed_month || '-').slice(0, 7)}}`;
+    networkMonthBadge.textContent = `Observed month: ${{(networkMonthSelect.value || '-').slice(0, 7)}}`;
 
     function renderDiagnostics() {{
       const diagnosticsNode = document.getElementById('network-diagnostics');
@@ -1104,6 +1166,44 @@ def _render_html(payload: dict[str, Any]) -> str:
       node.innerHTML = parts.map(item => `<span>${{item}}</span>`).join('');
     }}
 
+    function renderNetworkHistory(edgeId) {{
+      const history = (routeHistoryMap.get(edgeId) || []).slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
+      if (!history.length) {{
+        networkHistoryChart.innerHTML = '';
+        return;
+      }}
+      const points = history.slice(-36);
+      const left = 42, top = 16, width = 448, height = 150, bottom = top + height;
+      const maxFlow = Math.max(...points.map(p => p.observed_flow_mm3_dia || 0), 1);
+      const xMap = idx => left + (points.length === 1 ? width / 2 : (idx * width) / (points.length - 1));
+      const yMapFlow = value => bottom - ((value || 0) / maxFlow) * height;
+      const yMapUtil = value => bottom - Math.min(Math.max(value || 0, 0), 1.2) / 1.2 * height;
+      const flowPath = linePath(points.map(p => p.observed_flow_mm3_dia || 0), xMap, yMapFlow);
+      const utilPath = linePath(points.map(p => (p.observed_utilization_ratio || 0) * maxFlow / 1.2), xMap, yMapFlow);
+      const xLabels = points.filter((_, idx) => idx % Math.ceil(points.length / 5) === 0 || idx === points.length - 1)
+        .map(point => {{
+          const realIdx = points.findIndex(src => src.fecha === point.fecha);
+          return `<text x="${{xMap(realIdx)}}" y="${{bottom + 22}}" text-anchor="middle" fill="#6a7280" font-size="10">${{point.fecha.slice(0, 7)}}</text>`;
+        }}).join('');
+      const dots = points.map((point, idx) => {{
+        const isCurrent = point.fecha === networkMonthSelect.value;
+        return `
+          <circle cx="${{xMap(idx)}}" cy="${{yMapFlow(point.observed_flow_mm3_dia)}}" r="${{isCurrent ? 4.8 : 3.2}}" fill="var(--accent)" />
+          <circle cx="${{xMap(idx)}}" cy="${{yMapUtil(point.observed_utilization_ratio)}}" r="${{isCurrent ? 4.2 : 2.8}}" fill="var(--accent-2)" />
+        `;
+      }}).join('');
+      networkHistoryChart.innerHTML = `
+        <line x1="${{left}}" y1="${{bottom}}" x2="${{left + width}}" y2="${{bottom}}" stroke="rgba(106,114,128,0.18)" />
+        <line x1="${{left}}" y1="${{top}}" x2="${{left}}" y2="${{bottom}}" stroke="rgba(106,114,128,0.18)" />
+        <path d="${{flowPath}}" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linecap="round" />
+        <path d="${{utilPath}}" fill="none" stroke="var(--accent-2)" stroke-width="2.2" stroke-dasharray="6 5" stroke-linecap="round" />
+        ${{dots}}
+        ${{xLabels}}
+        <text x="44" y="14" fill="#6a7280" font-size="10">Flow</text>
+        <text x="92" y="14" fill="#6a7280" font-size="10">Utilization</text>
+      `;
+    }}
+
     function selectEdge(edgeId, visibleEdges) {{
       selectedEdgeId = edgeId;
       const edge = visibleEdges.find(item => item.edge_id === edgeId) || visibleEdges[0] || null;
@@ -1115,6 +1215,7 @@ def _render_html(payload: dict[str, Any]) -> str:
         document.getElementById('network-capacity').textContent = '-';
         document.getElementById('network-loops').textContent = '-';
         document.getElementById('network-status').textContent = '-';
+        networkHistoryChart.innerHTML = '';
         return;
       }}
       document.getElementById('network-route-title').textContent = edge.ruta;
@@ -1128,15 +1229,26 @@ def _render_html(payload: dict[str, Any]) -> str:
       document.getElementById('network-loops').textContent = `${{edge.active_loop_count || 0}} active loops`;
       document.getElementById('network-status').textContent =
         `source_confidence=${{edge.source_confidence}} | topology_status=${{edge.topology_status}}`;
+      renderNetworkHistory(edge.edge_id);
       [...document.querySelectorAll('.route-item')].forEach(item => {{
         item.classList.toggle('is-active', item.dataset.edgeId === edge.edge_id);
       }});
     }}
 
     function renderNetwork() {{
+      const selectedMonth = networkMonthSelect.value || data.network.overview.latest_observed_month;
       const gasoducto = networkGasoducto.value;
       const criticalOnly = networkCritical.checked;
-      const visibleEdges = projectedNetwork.edges.filter(edge => {{
+      networkMonthBadge.textContent = `Observed month: ${{(selectedMonth || '-').slice(0, 7)}}`;
+      const visibleEdges = projectedNetwork.edges.map(edge => {{
+        const snapshot = edgeSnapshotMap.get(`${{selectedMonth}}|${{edge.edge_id}}`) || {{}};
+        return {{
+          ...edge,
+          observed_flow_mm3_dia: snapshot.observed_flow_mm3_dia ?? 0,
+          observed_capacity_mm3_dia: snapshot.observed_capacity_mm3_dia ?? null,
+          observed_utilization_ratio: snapshot.observed_utilization_ratio ?? null,
+        }};
+      }}).filter(edge => {{
         const gasoductoMatch = gasoducto === 'Todos' || edge.gasoducto === gasoducto;
         const criticalMatch = !criticalOnly || (edge.observed_utilization_ratio != null && edge.observed_utilization_ratio >= 0.8) || edge.topology_status !== 'observed';
         return gasoductoMatch && criticalMatch;
@@ -1234,9 +1346,28 @@ def _render_html(payload: dict[str, Any]) -> str:
       }});
     }}
 
+    function toggleNetworkPlayback() {{
+      if (isPlayingNetwork) {{
+        window.clearInterval(networkTimerId);
+        isPlayingNetwork = false;
+        networkPlayButton.textContent = 'Play';
+        return;
+      }}
+      isPlayingNetwork = true;
+      networkPlayButton.textContent = 'Pause';
+      networkTimerId = window.setInterval(() => {{
+        const currentIndex = data.network.available_months.findIndex(month => month === networkMonthSelect.value);
+        const nextIndex = currentIndex + 1 >= data.network.available_months.length ? 0 : currentIndex + 1;
+        networkMonthSelect.value = data.network.available_months[nextIndex];
+        renderNetwork();
+      }}, 1100);
+    }}
+
     segmentSelect.addEventListener('change', event => renderChart(event.target.value));
     networkGasoducto.addEventListener('change', renderNetwork);
     networkCritical.addEventListener('change', renderNetwork);
+    networkMonthSelect.addEventListener('change', renderNetwork);
+    networkPlayButton.addEventListener('click', toggleNetworkPlayback);
     renderDiagnostics();
     renderSolverSummary();
     renderNetwork();
