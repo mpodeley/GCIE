@@ -146,6 +146,7 @@ def _apply_node_overrides(nodes_df: pd.DataFrame, overrides_df: pd.DataFrame) ->
 def _apply_edge_overrides(edges_df: pd.DataFrame, overrides_df: pd.DataFrame, nodes_df: pd.DataFrame) -> pd.DataFrame:
     canonical = edges_df.copy()
     canonical["canonical_name"] = canonical["ruta"]
+    canonical["capacidad_mm3_dia_override"] = pd.NA
     canonical["notes"] = pd.NA
     canonical["source_confidence"] = "powerbi_route"
     canonical["topology_status"] = "observed"
@@ -184,6 +185,7 @@ def _apply_edge_overrides(edges_df: pd.DataFrame, overrides_df: pd.DataFrame, no
                                 "longitud_origen": row["longitud_origen"],
                                 "latitud_destino": row["latitud_destino"],
                                 "longitud_destino": row["longitud_destino"],
+                                "capacidad_mm3_dia_override": row["capacidad_mm3_dia_override"],
                                 "source": "manual_override",
                                 "canonical_name": _normalize_text(row["canonical_name"]) or _normalize_text(row["ruta"]),
                                 "notes": _normalize_text(row["notes"]),
@@ -217,6 +219,7 @@ def _apply_edge_overrides(edges_df: pd.DataFrame, overrides_df: pd.DataFrame, no
             "longitud_origen",
             "latitud_destino",
             "longitud_destino",
+            "capacidad_mm3_dia_override",
             "canonical_name",
             "notes",
             "source_confidence",
@@ -417,6 +420,7 @@ def run() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
             "longitud_origen",
             "latitud_destino",
             "longitud_destino",
+            "capacidad_mm3_dia_override",
             "canonical_name",
             "notes",
             "source_confidence",

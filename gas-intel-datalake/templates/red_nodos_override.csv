@@ -1,1 +1,3 @@
 action,node_id,nombre,latitud,longitud,tipo_nodo,canonical_name,notes,source_confidence,topology_status
+add,manual_node_tratayen,Tratayen,-38.55,-68.63,junction,Tratayen,"Manual canonical node for the Perito Moreno corridor origin near Vaca Muerta. Coordinates are approximate and should be replaced by official asset geometry.",manual_override,inferred
+add,manual_node_salliquelo,Salliquelo,-36.75,-62.99,junction,Salliquelo,"Manual canonical node for the Perito Moreno corridor midpoint. Coordinates are approximate and should be replaced by official asset geometry.",manual_override,inferred

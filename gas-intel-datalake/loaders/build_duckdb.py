@@ -41,6 +41,11 @@ OPTIONAL_TABLE_SOURCES = {
     "red_nodo_roles_proxy": "red_nodo_roles_proxy.parquet",
     "red_nodo_exogenos_mensuales": "red_nodo_exogenos_mensuales.parquet",
     "red_balance_escenario_mensual": "red_balance_escenario_mensual.parquet",
+    "red_solver_tramos_mensuales": "red_solver_tramos_mensuales.parquet",
+    "red_solver_balance_nodal_mensual": "red_solver_balance_nodal_mensual.parquet",
+    "red_solver_resumen_mensual": "red_solver_resumen_mensual.parquet",
+    "red_pandapipes_junctions": "red_pandapipes_junctions.parquet",
+    "red_pandapipes_pipes": "red_pandapipes_pipes.parquet",
 }
 
 
