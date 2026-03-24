@@ -760,6 +760,11 @@ def _render_html(payload: dict[str, Any]) -> str:
       grid-template-columns: 1.55fr 0.85fr;
       align-items: start;
     }}
+    .zoom-grid {{
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 1fr 1fr;
+    }}
     .route-list {{
       display: grid;
       gap: 8px;
@@ -932,6 +937,18 @@ def _render_html(payload: dict[str, Any]) -> str:
             <div class="small">Open Diagnostics</div>
             <div class="diag-list" id="network-diagnostics" style="margin-top:10px"></div>
           </div>
+        </div>
+      </div>
+      <div class="zoom-grid">
+        <div class="explain-card">
+          <div class="small">AMBA Zoom</div>
+          <p class="small">Entrada a Capital Federal y corredores de retiro cercanos.</p>
+          <svg class="viz" id="network-zoom-amba" viewBox="0 0 520 320" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+        <div class="explain-card">
+          <div class="small">Tratayen Zoom</div>
+          <p class="small">Entradas de Vaca Muerta y corredor cercano a Tratayen.</p>
+          <svg class="viz" id="network-zoom-tratayen" viewBox="0 0 520 320" preserveAspectRatio="xMidYMid meet"></svg>
         </div>
       </div>
     </section>
@@ -1261,6 +1278,8 @@ def _render_html(payload: dict[str, Any]) -> str:
     const networkMonthBadge = document.getElementById('network-month-badge');
     const networkRouteList = document.getElementById('network-route-list');
     const networkHistoryChart = document.getElementById('network-history-chart');
+    const networkZoomAmba = document.getElementById('network-zoom-amba');
+    const networkZoomTratayen = document.getElementById('network-zoom-tratayen');
     let selectedEdgeId = null;
     let selectedNodeId = null;
     let isPlayingNetwork = false;
@@ -1340,7 +1359,51 @@ def _render_html(payload: dict[str, Any]) -> str:
       return {{ nodes: Array.from(nodeMap.values()), edges: projectedEdges, countryPath }};
     }}
 
+    function zoomProject(nodes, edges, width, height, pad) {{
+      if (!nodes.length) return {{ nodes: [], edges: [] }};
+      const xs = nodes.map(point => point.x_mercator);
+      const ys = nodes.map(point => point.y_mercator);
+      const bounds = {{
+        minX: Math.min(...xs),
+        maxX: Math.max(...xs),
+        minY: Math.min(...ys),
+        maxY: Math.max(...ys),
+      }};
+      const scaleX = (width - pad * 2) / ((bounds.maxX - bounds.minX) || 1);
+      const scaleY = (height - pad * 2) / ((bounds.maxY - bounds.minY) || 1);
+      const scale = Math.min(scaleX, scaleY);
+      const usedWidth = (bounds.maxX - bounds.minX) * scale;
+      const usedHeight = (bounds.maxY - bounds.minY) * scale;
+      const offsetX = (width - usedWidth) / 2;
+      const offsetY = (height - usedHeight) / 2;
+      const project = (x, y) => ({{
+        x: offsetX + (x - bounds.minX) * scale,
+        y: height - (offsetY + (y - bounds.minY) * scale),
+      }});
+      const nodeMap = new Map(nodes.map(node => [node.node_id, {{ ...node, ...project(node.x_mercator, node.y_mercator) }}]));
+      return {{
+        nodes: Array.from(nodeMap.values()),
+        edges: edges.map(edge => ({{
+          ...edge,
+          start: nodeMap.get(edge.source_node_id),
+          end: nodeMap.get(edge.target_node_id),
+        }})).filter(edge => edge.start && edge.end),
+      }};
+    }}
+
     const projectedNetwork = projectNetwork(data.network.nodes, data.network.edges, data.outline.polygons);
+    const zoomConfigs = [
+      {{
+        key: 'amba',
+        target: networkZoomAmba,
+        bounds: {{ minLon: -59.6, maxLon: -58.6, minLat: -35.0, maxLat: -33.8 }},
+      }},
+      {{
+        key: 'tratayen',
+        target: networkZoomTratayen,
+        bounds: {{ minLon: -69.2, maxLon: -67.8, minLat: -39.2, maxLat: -37.8 }},
+      }},
+    ];
     data.network.available_months.forEach((month, idx) => {{
       const option = document.createElement('option');
       option.value = month;
@@ -1575,6 +1638,7 @@ def _render_html(payload: dict[str, Any]) -> str:
       const exogenousMarkup = exogenousPoints.map(item => {{
         const node = projectedNetwork.nodes.find(candidate => candidate.node_id === item.node_id);
         if (!node) return '';
+        if ((item.supply_mm3_dia_proxy || 0) <= 0 && (item.withdrawal_mm3_dia_proxy || 0) <= 0 && (item.observed_throughput_mm3_dia || 0) <= 0) return '';
         const parts = [];
         if (networkShowObserved.checked && (item.observed_throughput_mm3_dia || 0) > 0) {{
           const radius = 3 + Math.sqrt((item.observed_throughput_mm3_dia || 0) / maxObservedThroughput) * 18;
@@ -1659,6 +1723,57 @@ def _render_html(payload: dict[str, Any]) -> str:
           selectedNodeId = item.dataset.nodeId;
           renderNetwork();
         }});
+      }});
+      renderZoomMaps(visibleEdges, visibleNodes, exogenousLookup, maxSource, maxSink, maxObservedThroughput);
+    }}
+
+    function renderZoomMaps(visibleEdges, visibleNodes, exogenousLookup, maxSource, maxSink, maxObservedThroughput) {{
+      zoomConfigs.forEach(config => {{
+        const nodes = visibleNodes.filter(node =>
+          node.longitud >= config.bounds.minLon &&
+          node.longitud <= config.bounds.maxLon &&
+          node.latitud >= config.bounds.minLat &&
+          node.latitud <= config.bounds.maxLat
+        );
+        const nodeSet = new Set(nodes.map(node => node.node_id));
+        const edges = visibleEdges.filter(edge => nodeSet.has(edge.source_node_id) && nodeSet.has(edge.target_node_id));
+        const projected = zoomProject(nodes, edges, 520, 320, 28);
+        const bubbles = nodes.map(node => {{
+          const item = exogenousLookup.get(node.node_id);
+          if (!item) return '';
+          if ((item.supply_mm3_dia_proxy || 0) <= 0 && (item.withdrawal_mm3_dia_proxy || 0) <= 0 && (item.observed_throughput_mm3_dia || 0) <= 0) return '';
+          const projectedNode = projected.nodes.find(candidate => candidate.node_id === node.node_id);
+          if (!projectedNode) return '';
+          const parts = [];
+          if (networkShowObserved.checked && (item.observed_throughput_mm3_dia || 0) > 0) {{
+            const radius = 3 + Math.sqrt((item.observed_throughput_mm3_dia || 0) / maxObservedThroughput) * 18;
+            parts.push(`<circle cx="${{projectedNode.x}}" cy="${{projectedNode.y}}" r="${{radius.toFixed(2)}}" fill="none" stroke="rgba(36,48,65,0.45)" stroke-width="1.4" />`);
+          }}
+          if (networkShowSources.checked && (item.supply_mm3_dia_proxy || 0) > 0) {{
+            const radius = 4 + Math.sqrt((item.supply_mm3_dia_proxy || 0) / maxSource) * 24;
+            parts.push(`<circle cx="${{projectedNode.x}}" cy="${{projectedNode.y}}" r="${{radius.toFixed(2)}}" fill="rgba(31,111,95,0.18)" stroke="var(--accent)" stroke-width="1.4" />`);
+          }}
+          if (networkShowSinks.checked && (item.withdrawal_mm3_dia_proxy || 0) > 0) {{
+            const radius = 4 + Math.sqrt((item.withdrawal_mm3_dia_proxy || 0) / maxSink) * 24;
+            parts.push(`<circle cx="${{projectedNode.x}}" cy="${{projectedNode.y}}" r="${{radius.toFixed(2)}}" fill="rgba(184,92,56,0.16)" stroke="var(--accent-2)" stroke-width="1.4" stroke-dasharray="5 4" />`);
+          }}
+          return parts.join('');
+        }}).join('');
+        const edgesMarkup = projected.edges.map(edge => {{
+          const width = 1.6 + ((edge.observed_flow_mm3_dia || 0) / Math.max(...visibleEdges.map(item => item.observed_flow_mm3_dia || 0), 1)) * 7;
+          return `<line x1="${{edge.start.x}}" y1="${{edge.start.y}}" x2="${{edge.end.x}}" y2="${{edge.end.y}}" stroke="${{utilizationColor(edge.observed_utilization_ratio)}}" stroke-width="${{width.toFixed(2)}}" stroke-linecap="round" stroke-opacity="0.85" />`;
+        }}).join('');
+        const nodesMarkup = projected.nodes.map(node => {{
+          const selected = selectedNodeId === node.node_id;
+          return `<circle cx="${{node.x}}" cy="${{node.y}}" r="3.8" fill="#fff" stroke="${{selected ? 'var(--accent)' : 'rgba(36,48,65,0.35)'}}" stroke-width="${{selected ? 2.2 : 1.1}}" />`;
+        }}).join('');
+        config.target.innerHTML = `
+          <rect x="0" y="0" width="520" height="320" rx="12" fill="rgba(255,255,255,0.88)" />
+          <rect x="18" y="18" width="484" height="284" rx="14" fill="none" stroke="rgba(36,48,65,0.08)" />
+          ${{bubbles}}
+          ${{edgesMarkup}}
+          ${{nodesMarkup}}
+        `;
       }});
     }}
 
