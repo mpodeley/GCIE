@@ -866,7 +866,7 @@ def _render_html(payload: dict[str, Any]) -> str:
       <div class="toolbar">
         <div style="flex:1 1 320px">
           <h2>Canonical Network</h2>
-            <p>Observed ENARGAS flows plus canonical overrides, compresoras, loops, and latest operational stress by corridor.</p>
+          <p>Observed ENARGAS flows plus canonical overrides, compresoras, loops, operational stress, and optional source/sink proxy bubbles by month.</p>
         </div>
         <span class="badge" id="network-month-badge"></span>
         <button type="button" id="network-play">Play</button>
@@ -1281,6 +1281,11 @@ def _render_html(payload: dict[str, Any]) -> str:
       return 'var(--stress-1)';
     }}
 
+    function monthStartKey(value) {{
+      if (!value) return '';
+      return value.slice(0, 7) + '-01 00:00:00';
+    }}
+
     function projectNetwork(nodes, edges, outlinePolygons) {{
       const nodePoints = nodes.map(node => [node.x_mercator, node.y_mercator]).filter(point => point[0] != null && point[1] != null);
       const outlinePoints = outlinePolygons.flatMap(polygon => polygon.map(point => [point.x, point.y]));
@@ -1440,6 +1445,7 @@ def _render_html(payload: dict[str, Any]) -> str:
 
     function renderNetwork() {{
       const selectedMonth = networkMonthSelect.value || data.network.overview.latest_observed_month;
+      const selectedMonthStart = monthStartKey(selectedMonth);
       const gasoducto = networkGasoducto.value;
       const criticalOnly = networkCritical.checked;
       networkMonthBadge.textContent = `Observed month: ${{(selectedMonth || '-').slice(0, 7)}}`;
@@ -1463,7 +1469,7 @@ def _render_html(payload: dict[str, Any]) -> str:
       }});
       const visibleNodes = projectedNetwork.nodes.filter(node => nodeIds.has(node.node_id));
       const maxFlow = Math.max(...visibleEdges.map(edge => edge.observed_flow_mm3_dia || 0), 1);
-      const exogenousPoints = (nodeExogenousMap.get(selectedMonth) || []).filter(item => nodeIds.has(item.node_id));
+      const exogenousPoints = (nodeExogenousMap.get(selectedMonthStart) || []).filter(item => nodeIds.has(item.node_id));
       const maxSource = Math.max(...exogenousPoints.map(item => item.supply_mm3_dia_proxy || 0), 1);
       const maxSink = Math.max(...exogenousPoints.map(item => item.withdrawal_mm3_dia_proxy || 0), 1);
 
