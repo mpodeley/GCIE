@@ -443,9 +443,13 @@ def _load_network_summary() -> dict[str, Any]:
               node_id,
               nombre,
               role_proxy,
+              observed_inflow_mm3_dia,
+              observed_outflow_mm3_dia,
+              observed_throughput_mm3_dia,
               supply_mm3_dia_proxy,
               withdrawal_mm3_dia_proxy,
-              exogenous_net_mm3_dia_proxy
+              exogenous_net_mm3_dia_proxy,
+              source
             FROM red_nodo_exogenos_mensuales
             ORDER BY fecha, nombre
             """
@@ -549,6 +553,9 @@ def _load_network_summary() -> dict[str, Any]:
         "diagnostic_warnings": warning_count,
         "latest_observed_month": None if latest_observed_month is None else str(latest_observed_month),
         "latest_solver_month": None if latest_solver_month is None else str(latest_solver_month),
+        "max_supply_proxy": max((float(row["supply_mm3_dia_proxy"] or 0.0) for row in node_exogenous), default=0.0),
+        "max_withdrawal_proxy": max((float(row["withdrawal_mm3_dia_proxy"] or 0.0) for row in node_exogenous), default=0.0),
+        "max_observed_throughput": max((float(row["observed_throughput_mm3_dia"] or 0.0) for row in node_exogenous_df.to_dict("records")), default=0.0),
     }
 
     return {
@@ -875,6 +882,7 @@ def _render_html(payload: dict[str, Any]) -> str:
         <label class="check"><input type="checkbox" id="network-critical"> Stress only</label>
         <label class="check"><input type="checkbox" id="network-show-sources" checked> Source Proxy</label>
         <label class="check"><input type="checkbox" id="network-show-sinks" checked> Sink Proxy</label>
+        <label class="check"><input type="checkbox" id="network-show-observed" checked> Observed Activity</label>
       </div>
       <div class="network-shell">
         <div>
@@ -888,6 +896,7 @@ def _render_html(payload: dict[str, Any]) -> str:
             <span class="loop">Loop activo</span>
             <span class="actual">Source Proxy</span>
             <span class="pred">Sink Proxy</span>
+            <span class="u0">Observed Activity</span>
           </div>
         </div>
         <div class="stack" style="margin-bottom:0">
@@ -1246,6 +1255,7 @@ def _render_html(payload: dict[str, Any]) -> str:
     const networkCritical = document.getElementById('network-critical');
     const networkShowSources = document.getElementById('network-show-sources');
     const networkShowSinks = document.getElementById('network-show-sinks');
+    const networkShowObserved = document.getElementById('network-show-observed');
     const networkMonthSelect = document.getElementById('network-month-select');
     const networkPlayButton = document.getElementById('network-play');
     const networkMonthBadge = document.getElementById('network-month-badge');
@@ -1449,7 +1459,10 @@ def _render_html(payload: dict[str, Any]) -> str:
       document.getElementById('network-metric-4-label').textContent = 'Net Proxy';
       document.getElementById('network-util').textContent = fmtMm(exogenous?.supply_mm3_dia_proxy);
       document.getElementById('network-flow').textContent = fmtMm(exogenous?.withdrawal_mm3_dia_proxy);
-      document.getElementById('network-capacity').textContent = exogenous?.role_proxy || '-';
+      document.getElementById('network-capacity').textContent =
+        exogenous?.observed_throughput_mm3_dia != null && exogenous?.observed_throughput_mm3_dia > 0
+          ? 'throughput ' + fmtMm(exogenous?.observed_throughput_mm3_dia)
+          : (exogenous?.role_proxy || '-');
       document.getElementById('network-loops').textContent = fmtMm(exogenous?.exogenous_net_mm3_dia_proxy);
       document.getElementById('network-status').textContent =
         `source_confidence=${{node.source_confidence}} | topology_status=${{node.topology_status}} | source=${{exogenous?.source || 'n/a'}}`;
@@ -1513,8 +1526,9 @@ def _render_html(payload: dict[str, Any]) -> str:
       const maxFlow = Math.max(...visibleEdges.map(edge => edge.observed_flow_mm3_dia || 0), 1);
       const exogenousPoints = (nodeExogenousMap.get(selectedMonthStart) || []).filter(item => nodeIds.has(item.node_id));
       const exogenousLookup = nodeExogenousLookup(selectedMonthStart);
-      const maxSource = Math.max(...exogenousPoints.map(item => item.supply_mm3_dia_proxy || 0), 1);
-      const maxSink = Math.max(...exogenousPoints.map(item => item.withdrawal_mm3_dia_proxy || 0), 1);
+      const maxSource = Math.max(data.network.overview.max_supply_proxy || 0, 1);
+      const maxSink = Math.max(data.network.overview.max_withdrawal_proxy || 0, 1);
+      const maxObservedThroughput = Math.max(data.network.overview.max_observed_throughput || 0, 1);
 
       const grid = Array.from({{ length: 8 }}, (_, idx) => {{
         const x = 70 + idx * 110;
@@ -1562,6 +1576,12 @@ def _render_html(payload: dict[str, Any]) -> str:
         const node = projectedNetwork.nodes.find(candidate => candidate.node_id === item.node_id);
         if (!node) return '';
         const parts = [];
+        if (networkShowObserved.checked && (item.observed_throughput_mm3_dia || 0) > 0) {{
+          const radius = 3 + Math.sqrt((item.observed_throughput_mm3_dia || 0) / maxObservedThroughput) * 18;
+          parts.push(`
+            <circle class="network-node-bubble" data-node-id="${{node.node_id}}" cx="${{node.x}}" cy="${{node.y}}" r="${{radius.toFixed(2)}}" fill="none" stroke="rgba(36,48,65,0.45)" stroke-width="1.5" />
+          `);
+        }}
         if (networkShowSources.checked && (item.supply_mm3_dia_proxy || 0) > 0) {{
           const radius = 4 + Math.sqrt((item.supply_mm3_dia_proxy || 0) / maxSource) * 24;
           parts.push(`
@@ -1664,6 +1684,7 @@ def _render_html(payload: dict[str, Any]) -> str:
     networkCritical.addEventListener('change', renderNetwork);
     networkShowSources.addEventListener('change', renderNetwork);
     networkShowSinks.addEventListener('change', renderNetwork);
+    networkShowObserved.addEventListener('change', renderNetwork);
     networkMonthSelect.addEventListener('change', renderNetwork);
     networkPlayButton.addEventListener('click', toggleNetworkPlayback);
     renderDiagnostics();
