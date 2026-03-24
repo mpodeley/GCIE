@@ -302,8 +302,8 @@
         <select id="network-month-select"></select>
         <select id="network-gasoducto"></select>
         <label class="check"><input type="checkbox" id="network-critical"> Stress only</label>
-        <label class="check"><input type="checkbox" id="network-show-sources" checked> Sources</label>
-        <label class="check"><input type="checkbox" id="network-show-sinks" checked> Sinks</label>
+        <label class="check"><input type="checkbox" id="network-show-sources" checked> Source Proxy</label>
+        <label class="check"><input type="checkbox" id="network-show-sinks" checked> Sink Proxy</label>
       </div>
       <div class="network-shell">
         <div>
@@ -315,20 +315,20 @@
             <span class="u3">>= 100%</span>
             <span class="comp">Compresora</span>
             <span class="loop">Loop activo</span>
-            <span class="actual">Source bubble</span>
-            <span class="pred">Sink bubble</span>
+            <span class="actual">Source Proxy</span>
+            <span class="pred">Sink Proxy</span>
           </div>
         </div>
         <div class="stack" style="margin-bottom:0">
           <div class="explain-card">
-            <div class="small">Route Detail</div>
+            <div class="small">Selection Detail</div>
             <div class="route-title" id="network-route-title"></div>
             <div class="route-meta" id="network-route-meta"></div>
             <div class="explain-grid">
-              <div class="explain-card"><div class="small">Observed Util</div><div class="value" id="network-util"></div></div>
-              <div class="explain-card"><div class="small">Observed Flow</div><div class="value" id="network-flow"></div></div>
+              <div class="explain-card"><div class="small" id="network-metric-1-label">Observed Util</div><div class="value" id="network-util"></div></div>
+              <div class="explain-card"><div class="small" id="network-metric-2-label">Observed Flow</div><div class="value" id="network-flow"></div></div>
               <div class="explain-card"><div class="small">Eff Capacity</div><div class="value" id="network-capacity"></div></div>
-              <div class="explain-card"><div class="small">Loops / Assets</div><div class="value" id="network-loops"></div></div>
+              <div class="explain-card"><div class="small" id="network-metric-4-label">Loops / Assets</div><div class="value" id="network-loops"></div></div>
             </div>
             <div class="explain-card" style="margin-top:10px">
               <div class="small">Topology / Provenance</div>
@@ -681,6 +681,7 @@
     const networkRouteList = document.getElementById('network-route-list');
     const networkHistoryChart = document.getElementById('network-history-chart');
     let selectedEdgeId = null;
+    let selectedNodeId = null;
     let isPlayingNetwork = false;
     let networkTimerId = null;
 
@@ -701,6 +702,9 @@
       bucket.push(item);
       nodeExogenousMap.set(item.fecha, bucket);
     });
+    function nodeExogenousLookup(monthKey) {
+      return new Map((nodeExogenousMap.get(monthKey) || []).map(item => [item.node_id, item]));
+    }
 
     function utilizationColor(utilization) {
       if (utilization == null) return '#4b648b';
@@ -841,20 +845,58 @@
       `;
     }
 
-    function selectEdge(edgeId, visibleEdges) {
-      selectedEdgeId = edgeId;
-      const edge = visibleEdges.find(item => item.edge_id === edgeId) || visibleEdges[0] || null;
-      if (!edge) {
-        document.getElementById('network-route-title').textContent = 'No visible route';
-        document.getElementById('network-route-meta').textContent = '';
-        document.getElementById('network-util').textContent = '-';
-        document.getElementById('network-flow').textContent = '-';
-        document.getElementById('network-capacity').textContent = '-';
-        document.getElementById('network-loops').textContent = '-';
-        document.getElementById('network-status').textContent = '-';
-        networkHistoryChart.innerHTML = '';
+    function resetSelectionPanel() {
+      document.getElementById('network-route-title').textContent = 'No visible selection';
+      document.getElementById('network-route-meta').textContent = '';
+      document.getElementById('network-metric-1-label').textContent = 'Observed Util';
+      document.getElementById('network-metric-2-label').textContent = 'Observed Flow';
+      document.getElementById('network-metric-4-label').textContent = 'Loops / Assets';
+      document.getElementById('network-util').textContent = '-';
+      document.getElementById('network-flow').textContent = '-';
+      document.getElementById('network-capacity').textContent = '-';
+      document.getElementById('network-loops').textContent = '-';
+      document.getElementById('network-status').textContent = '-';
+      networkHistoryChart.innerHTML = '';
+    }
+
+    function selectNode(nodeId, visibleNodes, exogenousLookup, monthKey) {
+      selectedNodeId = nodeId;
+      selectedEdgeId = null;
+      const node = visibleNodes.find(item => item.node_id === nodeId) || null;
+      const exogenous = node ? exogenousLookup.get(node.node_id) : null;
+      if (!node) {
+        resetSelectionPanel();
         return;
       }
+      document.getElementById('network-route-title').textContent = node.nombre;
+      document.getElementById('network-route-meta').innerHTML = `
+        <span>Node</span>
+        <span>month: ${monthKey.slice(0, 7)}</span>
+      `;
+      document.getElementById('network-metric-1-label').textContent = 'Source Proxy';
+      document.getElementById('network-metric-2-label').textContent = 'Sink Proxy';
+      document.getElementById('network-metric-4-label').textContent = 'Net Proxy';
+      document.getElementById('network-util').textContent = fmtMm(exogenous?.supply_mm3_dia_proxy);
+      document.getElementById('network-flow').textContent = fmtMm(exogenous?.withdrawal_mm3_dia_proxy);
+      document.getElementById('network-capacity').textContent = exogenous?.role_proxy || '-';
+      document.getElementById('network-loops').textContent = fmtMm(exogenous?.exogenous_net_mm3_dia_proxy);
+      document.getElementById('network-status').textContent =
+        `source_confidence=${node.source_confidence} | topology_status=${node.topology_status} | source=${exogenous?.source || 'n/a'}`;
+      networkHistoryChart.innerHTML = '';
+      [...document.querySelectorAll('.route-item')].forEach(item => item.classList.remove('is-active'));
+    }
+
+    function selectEdge(edgeId, visibleEdges) {
+      selectedEdgeId = edgeId;
+      selectedNodeId = null;
+      const edge = visibleEdges.find(item => item.edge_id === edgeId) || visibleEdges[0] || null;
+      if (!edge) {
+        resetSelectionPanel();
+        return;
+      }
+      document.getElementById('network-metric-1-label').textContent = 'Observed Util';
+      document.getElementById('network-metric-2-label').textContent = 'Observed Flow';
+      document.getElementById('network-metric-4-label').textContent = 'Loops / Assets';
       document.getElementById('network-route-title').textContent = edge.ruta;
       document.getElementById('network-route-meta').innerHTML = `
         <span>${edge.gasoducto}</span>
@@ -899,6 +941,7 @@
       const visibleNodes = projectedNetwork.nodes.filter(node => nodeIds.has(node.node_id));
       const maxFlow = Math.max(...visibleEdges.map(edge => edge.observed_flow_mm3_dia || 0), 1);
       const exogenousPoints = (nodeExogenousMap.get(selectedMonthStart) || []).filter(item => nodeIds.has(item.node_id));
+      const exogenousLookup = nodeExogenousLookup(selectedMonthStart);
       const maxSource = Math.max(...exogenousPoints.map(item => item.supply_mm3_dia_proxy || 0), 1);
       const maxSink = Math.max(...exogenousPoints.map(item => item.withdrawal_mm3_dia_proxy || 0), 1);
 
@@ -935,12 +978,13 @@
         const stroke = inferred ? 'var(--accent-2)' : 'rgba(36,48,65,0.28)';
         const fill = node.has_compressor ? 'var(--deep)' : '#ffffff';
         const radius = node.has_compressor ? 5.5 : 4.2;
+        const selected = selectedNodeId === node.node_id;
         const label = node.has_compressor || inferred
           ? `<text x="${node.x + 7}" y="${node.y - 7}" font-size="10.5" fill="#5c6370">${node.nombre}</text>`
           : '';
         const square = node.has_compressor
-          ? `<rect x="${node.x - 5}" y="${node.y - 5}" width="10" height="10" fill="${fill}" stroke="${stroke}" stroke-width="1.5" transform="rotate(45 ${node.x} ${node.y})" />`
-          : `<circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="1.4" />`;
+          ? `<rect class="network-node" data-node-id="${node.node_id}" x="${node.x - 5}" y="${node.y - 5}" width="10" height="10" fill="${fill}" stroke="${selected ? 'var(--accent)' : stroke}" stroke-width="${selected ? 2.4 : 1.5}" transform="rotate(45 ${node.x} ${node.y})" />`
+          : `<circle class="network-node" data-node-id="${node.node_id}" cx="${node.x}" cy="${node.y}" r="${radius}" fill="${fill}" stroke="${selected ? 'var(--accent)' : stroke}" stroke-width="${selected ? 2.4 : 1.4}" />`;
         return `${square}${label}`;
       }).join('');
       const exogenousMarkup = exogenousPoints.map(item => {
@@ -950,13 +994,13 @@
         if (networkShowSources.checked && (item.supply_mm3_dia_proxy || 0) > 0) {
           const radius = 4 + Math.sqrt((item.supply_mm3_dia_proxy || 0) / maxSource) * 24;
           parts.push(`
-            <circle cx="${node.x}" cy="${node.y}" r="${radius.toFixed(2)}" fill="rgba(31,111,95,0.18)" stroke="var(--accent)" stroke-width="1.6" />
+            <circle class="network-node-bubble" data-node-id="${node.node_id}" cx="${node.x}" cy="${node.y}" r="${radius.toFixed(2)}" fill="rgba(31,111,95,0.18)" stroke="var(--accent)" stroke-width="1.6" />
           `);
         }
         if (networkShowSinks.checked && (item.withdrawal_mm3_dia_proxy || 0) > 0) {
           const radius = 4 + Math.sqrt((item.withdrawal_mm3_dia_proxy || 0) / maxSink) * 24;
           parts.push(`
-            <circle cx="${node.x}" cy="${node.y}" r="${radius.toFixed(2)}" fill="rgba(184,92,56,0.16)" stroke="var(--accent-2)" stroke-width="1.6" stroke-dasharray="5 4" />
+            <circle class="network-node-bubble" data-node-id="${node.node_id}" cx="${node.x}" cy="${node.y}" r="${radius.toFixed(2)}" fill="rgba(184,92,56,0.16)" stroke="var(--accent-2)" stroke-width="1.6" stroke-dasharray="5 4" />
           `);
         }
         return parts.join('');
@@ -996,14 +1040,32 @@
         networkRouteList.appendChild(button);
       });
 
-      if (!visibleEdges.find(edge => edge.edge_id === selectedEdgeId)) {
-        selectedEdgeId = ranked[0]?.edge_id || visibleEdges[0]?.edge_id || null;
+      if (selectedNodeId && visibleNodes.find(node => node.node_id === selectedNodeId)) {
+        selectNode(selectedNodeId, visibleNodes, exogenousLookup, selectedMonthStart);
+      } else {
+        if (!visibleEdges.find(edge => edge.edge_id === selectedEdgeId)) {
+          selectedEdgeId = ranked[0]?.edge_id || visibleEdges[0]?.edge_id || null;
+        }
+        selectEdge(selectedEdgeId, visibleEdges);
       }
-      selectEdge(selectedEdgeId, visibleEdges);
       [...document.querySelectorAll('.network-edge')].forEach(item => {
         item.style.cursor = 'pointer';
         item.addEventListener('click', () => {
           selectedEdgeId = item.dataset.edgeId;
+          renderNetwork();
+        });
+      });
+      [...document.querySelectorAll('.network-node')].forEach(item => {
+        item.style.cursor = 'pointer';
+        item.addEventListener('click', () => {
+          selectedNodeId = item.dataset.nodeId;
+          renderNetwork();
+        });
+      });
+      [...document.querySelectorAll('.network-node-bubble')].forEach(item => {
+        item.style.cursor = 'pointer';
+        item.addEventListener('click', () => {
+          selectedNodeId = item.dataset.nodeId;
           renderNetwork();
         });
       });
