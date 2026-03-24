@@ -1,0 +1,30 @@
+# Editor temp files
+*.swp
+*.swo
+*.kate-swp
+.DS_Store
+
+# Nested repo backup created during monorepo migration
+**/.git.backup-monorepo/
+
+# Python caches and local envs
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/venv/
+
+# Local env files
+**/.env
+**/.env.*
+
+# Data lake and pipeline runtime artifacts
+**/duckdb/*.duckdb
+**/duckdb/*.db
+**/duckdb/*.wal
+**/duckdb/*.tmp
+**/data/raw/
+**/data/processed/
+**/snapshots/

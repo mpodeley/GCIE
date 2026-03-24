@@ -1,0 +1,27 @@
+# Python cache and virtualenvs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local environment and editor files
+.env
+.env.*
+*.swp
+*.swo
+.DS_Store
+
+# Data lake runtime artifacts
+duckdb/*.duckdb
+duckdb/*.db
+duckdb/*.wal
+duckdb/*.tmp
+data/raw/
+data/processed/
+snapshots/
+
+# Notebook and analysis outputs
+*.ipynb_checkpoints
