@@ -16,6 +16,7 @@ DATALAKE_DIR = ROOT / "gas-intel-datalake"
 PROCESSED_DIR = DATALAKE_DIR / "data" / "processed"
 DUCKDB_PATH = DATALAKE_DIR / "duckdb" / "gas_intel.duckdb"
 OUTPUT_PATH = ROOT / "gas-intel-meta" / "dashboard" / "index.html"
+NETWORK_OUTPUT_PATH = ROOT / "gas-intel-meta" / "dashboard" / "network.html"
 ASSETS_DIR = ROOT / "gas-intel-meta" / "assets"
 OUTLINE_PATH = ASSETS_DIR / "argentina-outline-3857.json"
 CLAUDE_DOCS = [
@@ -574,14 +575,14 @@ def _load_network_summary() -> dict[str, Any]:
     }
 
 
-def _render_html(payload: dict[str, Any]) -> str:
+def _render_network_html(payload: dict[str, Any]) -> str:
     payload_json = json.dumps(payload, ensure_ascii=True)
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GCIE Dashboard</title>
+  <title>GCIE Network</title>
   <style>
     :root {{
       --bg: #f4f1ea;
@@ -754,6 +755,15 @@ def _render_html(payload: dict[str, Any]) -> str:
       font-size: 0.84rem;
       font-weight: 700;
     }}
+    .nav {{
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }}
+    .nav a {{
+      text-decoration: none;
+    }}
     .network-shell {{
       display: grid;
       gap: 16px;
@@ -849,14 +859,18 @@ def _render_html(payload: dict[str, Any]) -> str:
 </head>
 <body>
   <div class="wrap">
+    <div class="nav">
+      <a class="badge" href="./index.html">Project Dashboard</a>
+      <span class="badge">Network View</span>
+    </div>
     <div class="hero">
       <section class="panel">
-        <span class="badge">GCIE Live Snapshot</span>
-        <h1>Data, Model, Network, and Current State</h1>
-        <p>Single-page view of the current datalake snapshot, the active SP1 baseline, the canonical transport network, and the latest solver status.</p>
+        <span class="badge">GCIE Network</span>
+        <h1>Canonical Network and Monthly Balance</h1>
+        <p>Dedicated view of the gas network, monthly stress, nodal activity, and source/sink balance checks.</p>
       </section>
       <section class="panel">
-        <h2>SP1 Metric</h2>
+        <h2>Network State</h2>
         <div class="value" id="metric-value"></div>
         <p class="small" id="metric-label"></p>
       </section>
@@ -936,6 +950,22 @@ def _render_html(payload: dict[str, Any]) -> str:
           <div class="explain-card">
             <div class="small">Open Diagnostics</div>
             <div class="diag-list" id="network-diagnostics" style="margin-top:10px"></div>
+          </div>
+          <div class="explain-card">
+            <div class="small">Monthly Sources</div>
+            <table>
+              <thead><tr><th>Node</th><th>Volume</th></tr></thead>
+              <tbody id="source-table"></tbody>
+              <tfoot><tr><th>Total</th><th id="source-total"></th></tr></tfoot>
+            </table>
+          </div>
+          <div class="explain-card">
+            <div class="small">Monthly Sinks</div>
+            <table>
+              <thead><tr><th>Node</th><th>Volume</th></tr></thead>
+              <tbody id="sink-table"></tbody>
+              <tfoot><tr><th>Total</th><th id="sink-total"></th></tr></tfoot>
+            </table>
           </div>
         </div>
       </div>
@@ -1042,9 +1072,9 @@ def _render_html(payload: dict[str, Any]) -> str:
     const fmtNum = value => value == null || Number.isNaN(value) ? '-' : new Intl.NumberFormat('en-US', {{ maximumFractionDigits: 2 }}).format(value);
     const fmtMm = value => value == null || Number.isNaN(value) ? '-' : fmtNum(value) + ' MMm3/d';
 
-    document.getElementById('metric-value').textContent = fmtPct(data.forecast.metric_value);
+    document.getElementById('metric-value').textContent = fmtInt(data.network.overview.active_edges);
     document.getElementById('metric-label').textContent =
-      `${{data.forecast.metric_name}} | cadence: ${{data.forecast.model_artifacts.cadence}} | hypothesis: ${{data.forecast.hypothesis}}`;
+      `active edges | latest observed month: ${{(data.network.overview.latest_observed_month || '-').slice(0, 7)}}`;
 
     const cards = [
       ['Train Rows', data.forecast.train_rows],
@@ -1451,6 +1481,37 @@ def _render_html(payload: dict[str, Any]) -> str:
       node.innerHTML = parts.map(item => `<span>${{item}}</span>`).join('');
     }}
 
+    function renderExogenousBalance(monthKey) {{
+      const allRows = (nodeExogenousMap.get(monthKey) || []);
+      const sources = allRows
+        .filter(item => (item.supply_mm3_dia_proxy || 0) > 0)
+        .sort((a, b) => (b.supply_mm3_dia_proxy || 0) - (a.supply_mm3_dia_proxy || 0));
+      const sinks = allRows
+        .filter(item => (item.withdrawal_mm3_dia_proxy || 0) > 0)
+        .sort((a, b) => (b.withdrawal_mm3_dia_proxy || 0) - (a.withdrawal_mm3_dia_proxy || 0));
+
+      const sourceTable = document.getElementById('source-table');
+      const sinkTable = document.getElementById('sink-table');
+      sourceTable.innerHTML = '';
+      sinkTable.innerHTML = '';
+
+      sources.forEach(item => {{
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${{item.nombre}}</td><td>${{fmtMm(item.supply_mm3_dia_proxy)}}</td>`;
+        sourceTable.appendChild(row);
+      }});
+      sinks.forEach(item => {{
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${{item.nombre}}</td><td>${{fmtMm(item.withdrawal_mm3_dia_proxy)}}</td>`;
+        sinkTable.appendChild(row);
+      }});
+
+      const totalSource = sources.reduce((acc, item) => acc + (item.supply_mm3_dia_proxy || 0), 0);
+      const totalSink = sinks.reduce((acc, item) => acc + (item.withdrawal_mm3_dia_proxy || 0), 0);
+      document.getElementById('source-total').textContent = fmtMm(totalSource);
+      document.getElementById('sink-total').textContent = fmtMm(totalSink);
+    }}
+
     function renderNetworkHistory(edgeId) {{
       const history = (routeHistoryMap.get(edgeId) || []).slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
       if (!history.length) {{
@@ -1725,6 +1786,7 @@ def _render_html(payload: dict[str, Any]) -> str:
         }});
       }});
       renderZoomMaps(visibleEdges, visibleNodes, exogenousLookup, maxSource, maxSink, maxObservedThroughput);
+      renderExogenousBalance(selectedMonthStart);
     }}
 
     function renderZoomMaps(visibleEdges, visibleNodes, exogenousLookup, maxSource, maxSink, maxObservedThroughput) {{
@@ -1821,6 +1883,239 @@ def _render_html(payload: dict[str, Any]) -> str:
 """
 
 
+def _render_project_html(payload: dict[str, Any]) -> str:
+    payload_json = json.dumps(payload, ensure_ascii=True)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GCIE Project Dashboard</title>
+  <style>
+    :root {{
+      --bg: #f4f1ea;
+      --panel: #fffaf1;
+      --ink: #1e2430;
+      --muted: #6a7280;
+      --line: #d8cfbf;
+      --accent: #1f6f5f;
+      --accent-2: #b85c38;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(31,111,95,0.14), transparent 28%),
+        radial-gradient(circle at top right, rgba(184,92,56,0.12), transparent 24%),
+        var(--bg);
+    }}
+    .wrap {{ max-width: 1320px; margin: 0 auto; padding: 32px 20px 48px; }}
+    .nav {{ display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }}
+    .nav a {{ text-decoration: none; }}
+    .badge {{
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(31,111,95,0.1);
+      color: var(--accent);
+      font-size: 0.84rem;
+      font-weight: 700;
+    }}
+    h1, h2 {{ margin: 0 0 12px; font-family: "IBM Plex Serif", Georgia, serif; }}
+    p {{ margin: 0; color: var(--muted); }}
+    .panel {{
+      background: color-mix(in srgb, var(--panel) 92%, white 8%);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 8px 24px rgba(25, 35, 45, 0.05);
+    }}
+    .hero, .grid, .two {{
+      display: grid;
+      gap: 16px;
+      margin-bottom: 24px;
+    }}
+    .hero {{ grid-template-columns: 2fr 1fr; }}
+    .grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+    .two {{ grid-template-columns: 1fr 1fr; }}
+    .status-grid {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
+    .status-card {{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(255,255,255,0.78);
+      display: grid;
+      gap: 10px;
+      min-height: 220px;
+    }}
+    .status-kicker {{
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      color: var(--accent);
+      font-weight: 700;
+    }}
+    .value {{ font-size: 2rem; font-weight: 700; color: var(--accent); }}
+    .small {{ font-size: 0.92rem; color: var(--muted); }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 0.94rem; }}
+    th, td {{ padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ color: var(--muted); font-weight: 600; }}
+    @media (max-width: 980px) {{
+      .hero, .grid, .two, .status-grid {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="nav">
+      <span class="badge">Project Dashboard</span>
+      <a class="badge" href="./network.html">Network View</a>
+    </div>
+    <div class="hero">
+      <section class="panel">
+        <span class="badge">GCIE Live Snapshot</span>
+        <h1>Project Status and Model State</h1>
+        <p>Executive view of the current datalake snapshot, active models, documentation state and latest experiment outputs.</p>
+      </section>
+      <section class="panel">
+        <h2>SP1 Metric</h2>
+        <div class="value" id="metric-value"></div>
+        <p class="small" id="metric-label"></p>
+      </section>
+    </div>
+
+    <section class="grid" id="top-cards"></section>
+
+    <section class="panel" style="margin-bottom:24px">
+      <h2>Project State</h2>
+      <p id="project-summary"></p>
+      <section class="grid status-grid" id="project-status-grid" style="margin-top:16px"></section>
+    </section>
+
+    <section class="two">
+      <div class="panel">
+        <h2>Datalake Tables</h2>
+        <table>
+          <thead><tr><th>Table</th><th>Rows</th><th>Range</th></tr></thead>
+          <tbody id="datalake-table"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>SP1 By Segment</h2>
+        <table>
+          <thead><tr><th>Segment</th><th>Mean APE</th><th>N</th></tr></thead>
+          <tbody id="segment-table"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="two">
+      <div class="panel">
+        <h2>Latest Predictions</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Segment</th><th>Actual</th><th>Predicted</th></tr></thead>
+          <tbody id="prediction-table"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>Experiment Log</h2>
+        <table>
+          <thead><tr><th>Timestamp</th><th>Hypothesis</th><th>Metric</th><th>Delta</th><th>Kept</th></tr></thead>
+          <tbody id="results-table"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+  <script>
+    const data = {payload_json};
+    const fmtInt = value => new Intl.NumberFormat('en-US').format(value);
+    const fmtPct = value => (value * 100).toFixed(2) + '%';
+
+    document.getElementById('metric-value').textContent = fmtPct(data.forecast.metric_value);
+    document.getElementById('metric-label').textContent =
+      `${{data.forecast.metric_name}} | cadence: ${{data.forecast.model_artifacts.cadence}} | hypothesis: ${{data.forecast.hypothesis}}`;
+
+    const cards = [
+      ['Train Rows', data.forecast.train_rows],
+      ['Validation Rows', data.forecast.validation_rows],
+      ['Canonical Nodes', data.network.overview.active_nodes],
+      ['Canonical Edges', data.network.overview.active_edges],
+      ['Active Compressors', data.network.overview.compressors],
+      ['Open Diagnostics', data.network.overview.diagnostic_errors + data.network.overview.diagnostic_warnings],
+    ];
+    const cardsNode = document.getElementById('top-cards');
+    cards.forEach(([label, value]) => {{
+      const el = document.createElement('section');
+      el.className = 'panel';
+      el.innerHTML = `<div class="small">${{label}}</div><div class="value">${{fmtInt(value)}}</div>`;
+      cardsNode.appendChild(el);
+    }});
+
+    document.getElementById('project-summary').textContent =
+      `${{data.project.summary}} ${{data.project.roadmap ? 'Next: ' + data.project.roadmap : ''}}`;
+    const projectGridNode = document.getElementById('project-status-grid');
+    data.project.cards.forEach(item => {{
+      const el = document.createElement('article');
+      el.className = 'status-card';
+      el.innerHTML = `
+        <div class="status-kicker">${{item.repo}}</div>
+        <div>
+          <div style="font-weight:700; margin-bottom:4px">${{item.title}}</div>
+          <p class="small">${{item.role}}</p>
+        </div>
+        <div>
+          <div class="small">Current</div>
+          <div>${{item.current || '-'}}</div>
+        </div>
+        <div>
+          <div class="small">Signal</div>
+          <div>${{item.score || item.next_step || '-'}}</div>
+        </div>
+      `;
+      projectGridNode.appendChild(el);
+    }});
+
+    const datalakeNode = document.getElementById('datalake-table');
+    Object.entries(data.datalake).forEach(([table, summary]) => {{
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${{table}}</td><td>${{fmtInt(summary.rows)}}</td><td>${{summary.min_fecha || '-'}} -> ${{summary.max_fecha || '-'}}`;
+      datalakeNode.appendChild(row);
+    }});
+
+    const segmentNode = document.getElementById('segment-table');
+    data.forecast.by_segment.forEach(item => {{
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${{item.segmento}}</td><td>${{fmtPct(item.mean_ape)}}</td><td>${{item.n}}</td>`;
+      segmentNode.appendChild(row);
+    }});
+
+    const predictionNode = document.getElementById('prediction-table');
+    data.forecast.recent_predictions.forEach(item => {{
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${{item.fecha}}</td><td>${{item.segmento}}</td><td>${{fmtInt(item.actual_volume)}}</td><td>${{fmtInt(item.predicted_volume)}}</td>`;
+      predictionNode.appendChild(row);
+    }});
+
+    const resultsNode = document.getElementById('results-table');
+    if (data.results.length === 0) {{
+      const row = document.createElement('tr');
+      row.innerHTML = '<td colspan="5">No experiments logged yet.</td>';
+      resultsNode.appendChild(row);
+    }} else {{
+      data.results.slice().reverse().forEach(item => {{
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${{item.timestamp}}</td><td>${{item.hypothesis}}</td><td>${{item.metric_value}}</td><td>${{item.delta_vs_prev}}</td><td>${{item.kept}}</td>`;
+        resultsNode.appendChild(row);
+      }});
+    }}
+  </script>
+</body>
+</html>
+"""
+
+
 def main() -> None:
     payload = {
         "forecast": _load_forecast_summary(),
@@ -1831,8 +2126,10 @@ def main() -> None:
         "results": _load_results_table(FORECAST_DIR / "results.tsv"),
     }
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(_render_html(payload), encoding="utf-8")
+    OUTPUT_PATH.write_text(_render_project_html(payload), encoding="utf-8")
+    NETWORK_OUTPUT_PATH.write_text(_render_network_html(payload), encoding="utf-8")
     print(OUTPUT_PATH)
+    print(NETWORK_OUTPUT_PATH)
 
 
 if __name__ == "__main__":
