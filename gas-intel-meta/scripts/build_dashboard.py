@@ -880,16 +880,6 @@ def _render_network_html(payload: dict[str, Any]) -> str:
 
     <section class="panel stack">
       <div class="toolbar">
-        <div>
-          <h2>Project State</h2>
-          <p id="project-summary"></p>
-        </div>
-      </div>
-      <section class="grid status-grid" id="project-status-grid"></section>
-    </section>
-
-    <section class="panel stack">
-      <div class="toolbar">
         <div style="flex:1 1 320px">
           <h2>Canonical Network</h2>
           <p>Observed ENARGAS flows plus canonical overrides, compresoras, loops, operational stress, and optional source/sink proxy bubbles by month.</p>
@@ -964,8 +954,12 @@ def _render_network_html(payload: dict[str, Any]) -> str:
             <table>
               <thead><tr><th>Node</th><th>Volume</th></tr></thead>
               <tbody id="sink-table"></tbody>
-              <tfoot><tr><th>Total</th><th id="sink-total"></th></tr></tfoot>
+              <tfoot>
+                <tr><th>Total</th><th id="sink-total"></th></tr>
+                <tr><th>Net Proxy</th><th id="balance-net"></th></tr>
+              </tfoot>
             </table>
+            <p class="small" id="balance-note" style="margin-top:10px"></p>
           </div>
         </div>
       </div>
@@ -983,85 +977,6 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       </div>
     </section>
 
-    <section class="panel stack">
-      <div class="toolbar">
-        <div>
-          <h2>SP1 Visual Drilldown</h2>
-          <p>Real vs model by segment, with the variables the baseline is leaning on.</p>
-        </div>
-        <select id="segment-select"></select>
-      </div>
-      <div class="chart-shell">
-        <div>
-          <svg class="viz" id="forecast-chart" viewBox="0 0 720 320" preserveAspectRatio="none"></svg>
-          <div class="legend">
-            <span class="actual">Actual</span>
-            <span class="pred">Predicted</span>
-          </div>
-        </div>
-        <div class="panel" style="padding:14px">
-          <h2 id="explain-title">Prediction Story</h2>
-          <p class="small" id="explain-subtitle"></p>
-          <div class="explain-grid">
-            <div class="explain-card"><div class="small">Actual</div><div class="value" id="story-actual"></div></div>
-            <div class="explain-card"><div class="small">Predicted</div><div class="value" id="story-pred"></div></div>
-            <div class="explain-card"><div class="small">HDD</div><div class="value" id="story-hdd"></div></div>
-            <div class="explain-card"><div class="small">Temp Media</div><div class="value" id="story-temp"></div></div>
-          </div>
-          <div class="explain-card" style="margin-top:10px">
-            <div class="small">Lag Inputs</div>
-            <div class="mono" id="story-lags" style="margin-top:8px"></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="three">
-      <div class="panel">
-        <h2>Recent History</h2>
-        <p class="small">Last 24 observations for the selected segment. Validation months include the model overlay.</p>
-        <svg class="viz" id="history-chart" viewBox="0 0 720 320" preserveAspectRatio="none"></svg>
-      </div>
-      <div class="panel">
-        <h2>Driver View</h2>
-        <p class="small">Observed volume vs HDD for the selected segment. Validation points are highlighted.</p>
-        <svg class="viz" id="driver-chart" viewBox="0 0 720 320" preserveAspectRatio="none"></svg>
-      </div>
-    </section>
-
-    <section class="two">
-      <div class="panel">
-        <h2>Datalake Tables</h2>
-        <table>
-          <thead><tr><th>Table</th><th>Rows</th><th>Range</th></tr></thead>
-          <tbody id="datalake-table"></tbody>
-        </table>
-      </div>
-      <div class="panel">
-        <h2>SP1 By Segment</h2>
-        <table>
-          <thead><tr><th>Segment</th><th>Mean APE</th><th>N</th></tr></thead>
-          <tbody id="segment-table"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="two">
-      <div class="panel">
-        <h2>Latest Predictions</h2>
-        <table>
-          <thead><tr><th>Date</th><th>Segment</th><th>Actual</th><th>Predicted</th></tr></thead>
-          <tbody id="prediction-table"></tbody>
-        </table>
-      </div>
-      <div class="panel">
-        <h2>Experiment Log</h2>
-        <table>
-          <thead><tr><th>Timestamp</th><th>Hypothesis</th><th>Metric</th><th>Delta</th><th>Kept</th></tr></thead>
-          <tbody id="results-table"></tbody>
-        </table>
-      </div>
-    </section>
   </div>
   <script>
     const data = {payload_json};
@@ -1077,12 +992,12 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       `active edges | latest observed month: ${{(data.network.overview.latest_observed_month || '-').slice(0, 7)}}`;
 
     const cards = [
-      ['Train Rows', data.forecast.train_rows],
-      ['Validation Rows', data.forecast.validation_rows],
       ['Canonical Nodes', data.network.overview.active_nodes],
       ['Canonical Edges', data.network.overview.active_edges],
       ['Active Compressors', data.network.overview.compressors],
+      ['Observed Months', data.network.available_months.length],
       ['Open Diagnostics', data.network.overview.diagnostic_errors + data.network.overview.diagnostic_warnings],
+      ['Solver Unmet', data.network.solver_summary ? fmtNum(data.network.solver_summary.unmet_withdrawal_mm3_dia) : '-'],
     ];
     const cardsNode = document.getElementById('top-cards');
     cards.forEach(([label, value]) => {{
@@ -1092,210 +1007,9 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       cardsNode.appendChild(el);
     }});
 
-    const projectSummaryNode = document.getElementById('project-summary');
-    projectSummaryNode.textContent = `${{data.project.summary}} ${{data.project.roadmap ? 'Next: ' + data.project.roadmap : ''}}`;
-    const projectGridNode = document.getElementById('project-status-grid');
-    data.project.cards.forEach(item => {{
-      const el = document.createElement('article');
-      el.className = 'status-card';
-      el.innerHTML = `
-        <div class="status-kicker">${{item.repo}}</div>
-        <div>
-          <div class="route-title">${{item.title}}</div>
-          <p class="small">${{item.role}}</p>
-        </div>
-        <div>
-          <div class="small">Current</div>
-          <div>${{item.current || '-'}}</div>
-        </div>
-        <div>
-          <div class="small">Signal</div>
-          <div>${{item.score || item.next_step || '-'}}</div>
-        </div>
-      `;
-      projectGridNode.appendChild(el);
-    }});
-
-    const datalakeNode = document.getElementById('datalake-table');
-    Object.entries(data.datalake).forEach(([table, summary]) => {{
-      const row = document.createElement('tr');
-      row.innerHTML = `<td>${{table}}</td><td>${{fmtInt(summary.rows)}}</td><td>${{summary.min_fecha || '-'}} -> ${{summary.max_fecha || '-'}}`;
-      datalakeNode.appendChild(row);
-    }});
-
-    const segmentNode = document.getElementById('segment-table');
-    data.forecast.by_segment.forEach(item => {{
-      const row = document.createElement('tr');
-      row.innerHTML = `<td>${{item.segmento}}</td><td>${{fmtPct(item.mean_ape)}}</td><td>${{item.n}}</td>`;
-      segmentNode.appendChild(row);
-    }});
-
-    const predictionNode = document.getElementById('prediction-table');
-    data.forecast.recent_predictions.forEach(item => {{
-      const row = document.createElement('tr');
-      row.innerHTML = `<td>${{item.fecha}}</td><td>${{item.segmento}}</td><td>${{fmtInt(item.actual_volume)}}</td><td>${{fmtInt(item.predicted_volume)}}</td>`;
-      predictionNode.appendChild(row);
-    }});
-
-    const resultsNode = document.getElementById('results-table');
-    if (data.results.length === 0) {{
-      const row = document.createElement('tr');
-      row.innerHTML = '<td colspan="5">No experiments logged yet.</td>';
-      resultsNode.appendChild(row);
-    }} else {{
-      data.results.slice().reverse().forEach(item => {{
-        const row = document.createElement('tr');
-        row.innerHTML = `<td>${{item.timestamp}}</td><td>${{item.hypothesis}}</td><td>${{item.metric_value}}</td><td>${{item.delta_vs_prev}}</td><td>${{item.kept}}</td>`;
-        resultsNode.appendChild(row);
-      }});
-    }}
-
-    const segmentSelect = document.getElementById('segment-select');
-    const chart = document.getElementById('forecast-chart');
-    const historyChart = document.getElementById('history-chart');
-    const driverChart = document.getElementById('driver-chart');
-
-    data.forecast.chart_segments.forEach((item, idx) => {{
-      const option = document.createElement('option');
-      option.value = item.segmento;
-      option.textContent = item.segmento;
-      if (idx === 0) option.selected = true;
-      segmentSelect.appendChild(option);
-    }});
-
     const linePath = (points, xMap, yMap) => points.map((p, idx) =>
       `${{idx === 0 ? 'M' : 'L'}} ${{xMap(idx)}} ${{yMap(p)}}`
     ).join(' ');
-
-    function renderStory(point) {{
-      document.getElementById('explain-title').textContent = `${{point.segmento}} | ${{point.fecha}}`;
-      document.getElementById('explain-subtitle').textContent = `APE: ${{fmtPct(point.ape)}}`;
-      document.getElementById('story-actual').textContent = fmtShort(point.actual_volume);
-      document.getElementById('story-pred').textContent = fmtShort(point.predicted_volume);
-      document.getElementById('story-hdd').textContent = point.hdd == null ? '-' : point.hdd;
-      document.getElementById('story-temp').textContent = point.temp_media == null ? '-' : point.temp_media + ' C';
-      document.getElementById('story-lags').textContent = Object.entries(point.lag_values)
-        .map(([key, value]) => `${{key}}: ${{fmtShort(value)}}`)
-        .join(' | ');
-    }}
-
-    function renderHistory(segment) {{
-      const segmentData = data.forecast.history_segments.find(item => item.segmento === segment);
-      if (!segmentData) return;
-      const points = segmentData.points;
-      const maxY = Math.max(...points.map(p => p.actual_volume), ...points.map(p => p.predicted_volume || 0)) * 1.1;
-      const left = 52, top = 20, width = 630, height = 240, bottom = top + height;
-      const xMap = idx => left + (points.length === 1 ? width / 2 : (idx * width) / (points.length - 1));
-      const yMap = value => bottom - (value / maxY) * height;
-      const grid = [0, 0.25, 0.5, 0.75, 1].map(tick => {{
-        const y = top + height * tick;
-        const value = maxY * (1 - tick);
-        return `
-          <line x1="${{left}}" y1="${{y}}" x2="${{left + width}}" y2="${{y}}" stroke="rgba(106,114,128,0.16)" />
-          <text x="8" y="${{y + 4}}" fill="#6a7280" font-size="11">${{fmtShort(value)}}</text>
-        `;
-      }}).join('');
-      const actualPath = linePath(points.map(p => p.actual_volume), xMap, yMap);
-      const predPoints = points.filter(p => p.predicted_volume != null);
-      const predPath = predPoints.length
-        ? linePath(predPoints.map(p => p.predicted_volume), idx => xMap(points.findIndex(src => src.fecha === predPoints[idx].fecha)), yMap)
-        : '';
-      const xLabels = points.filter((_, idx) => idx % Math.ceil(points.length / 6) === 0 || idx === points.length - 1)
-        .map(point => {{
-          const realIdx = points.findIndex(src => src.fecha === point.fecha);
-          return `<text x="${{xMap(realIdx)}}" y="${{bottom + 24}}" text-anchor="middle" fill="#6a7280" font-size="11">${{point.fecha.slice(0, 7)}}</text>`;
-        }}).join('');
-      const dots = points.map((point, idx) => {{
-        const validationColor = point.is_validation ? "var(--accent-2)" : "var(--accent)";
-        const predDot = point.predicted_volume == null ? '' : `<circle cx="${{xMap(idx)}}" cy="${{yMap(point.predicted_volume)}}" r="4" fill="var(--accent-2)" />`;
-        return `<circle cx="${{xMap(idx)}}" cy="${{yMap(point.actual_volume)}}" r="4" fill="${{validationColor}}" />${{predDot}}`;
-      }}).join('');
-      historyChart.innerHTML = `
-        ${{grid}}
-        <path d="${{actualPath}}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" />
-        ${{predPath ? `<path d="${{predPath}}" fill="none" stroke="var(--accent-2)" stroke-width="3" stroke-dasharray="6 6" stroke-linecap="round" />` : ''}}
-        ${{dots}}
-        ${{xLabels}}
-      `;
-    }}
-
-    function renderDrivers(segment) {{
-      const segmentData = data.forecast.driver_segments.find(item => item.segmento === segment);
-      if (!segmentData) return;
-      const points = segmentData.points;
-      const maxX = Math.max(...points.map(p => p.hdd), 1);
-      const maxY = Math.max(...points.map(p => p.actual_volume)) * 1.1;
-      const left = 52, top = 20, width = 630, height = 240, bottom = top + height;
-      const xMap = value => left + (value / maxX) * width;
-      const yMap = value => bottom - (value / maxY) * height;
-      const grid = [0, 0.25, 0.5, 0.75, 1].map(tick => {{
-        const y = top + height * tick;
-        const value = maxY * (1 - tick);
-        return `
-          <line x1="${{left}}" y1="${{y}}" x2="${{left + width}}" y2="${{y}}" stroke="rgba(106,114,128,0.16)" />
-          <text x="8" y="${{y + 4}}" fill="#6a7280" font-size="11">${{fmtShort(value)}}</text>
-        `;
-      }}).join('');
-      const xTicks = [0, 0.25, 0.5, 0.75, 1].map(tick => {{
-        const value = maxX * tick;
-        const x = left + width * tick;
-        return `<text x="${{x}}" y="${{bottom + 24}}" text-anchor="middle" fill="#6a7280" font-size="11">${{value.toFixed(1)}}</text>`;
-      }}).join('');
-      const dots = points.map(point => `
-        <circle cx="${{xMap(point.hdd)}}" cy="${{yMap(point.actual_volume)}}" r="5" fill="${{point.is_validation ? 'var(--accent-2)' : 'var(--accent)'}}" fill-opacity="0.82" />
-      `).join('');
-      driverChart.innerHTML = `
-        ${{grid}}
-        <text x="8" y="16" fill="#6a7280" font-size="11">Volume</text>
-        <text x="${{left + width - 20}}" y="${{bottom + 24}}" fill="#6a7280" font-size="11">HDD</text>
-        ${{dots}}
-        ${{xTicks}}
-      `;
-    }}
-
-    function renderChart(segment) {{
-      const segmentData = data.forecast.chart_segments.find(item => item.segmento === segment);
-      if (!segmentData) return;
-      const points = segmentData.points;
-      const maxY = Math.max(...points.flatMap(p => [p.actual_volume, p.predicted_volume])) * 1.1;
-      const left = 52, top = 20, width = 630, height = 240, bottom = top + height;
-      const xMap = idx => left + (points.length === 1 ? width / 2 : (idx * width) / (points.length - 1));
-      const yMap = value => bottom - (value / maxY) * height;
-
-      const grid = [0, 0.25, 0.5, 0.75, 1].map(tick => {{
-        const y = top + height * tick;
-        const value = maxY * (1 - tick);
-        return `
-          <line x1="${{left}}" y1="${{y}}" x2="${{left + width}}" y2="${{y}}" stroke="rgba(106,114,128,0.16)" />
-          <text x="8" y="${{y + 4}}" fill="#6a7280" font-size="11">${{fmtShort(value)}}</text>
-        `;
-      }}).join('');
-
-      const xLabels = points.map((point, idx) => `
-        <text x="${{xMap(idx)}}" y="${{bottom + 24}}" text-anchor="middle" fill="#6a7280" font-size="11">${{point.fecha.slice(0, 7)}}</text>
-      `).join('');
-
-      const actualPath = linePath(points.map(p => p.actual_volume), xMap, yMap);
-      const predPath = linePath(points.map(p => p.predicted_volume), xMap, yMap);
-
-      const dots = points.map((point, idx) => `
-        <circle cx="${{xMap(idx)}}" cy="${{yMap(point.actual_volume)}}" r="5" fill="var(--accent)" />
-        <circle cx="${{xMap(idx)}}" cy="${{yMap(point.predicted_volume)}}" r="5" fill="var(--accent-2)" />
-      `).join('');
-
-      chart.innerHTML = `
-        <rect x="0" y="0" width="720" height="320" rx="12" fill="transparent" />
-        ${{grid}}
-        <path d="${{actualPath}}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" />
-        <path d="${{predPath}}" fill="none" stroke="var(--accent-2)" stroke-width="3" stroke-linecap="round" />
-        ${{dots}}
-        ${{xLabels}}
-      `;
-
-      renderStory(points[points.length - 1]);
-      renderHistory(segment);
-      renderDrivers(segment);
-    }}
 
     const networkMap = document.getElementById('network-map');
     const networkGasoducto = document.getElementById('network-gasoducto');
@@ -1508,8 +1222,12 @@ def _render_network_html(payload: dict[str, Any]) -> str:
 
       const totalSource = sources.reduce((acc, item) => acc + (item.supply_mm3_dia_proxy || 0), 0);
       const totalSink = sinks.reduce((acc, item) => acc + (item.withdrawal_mm3_dia_proxy || 0), 0);
+      const net = totalSource - totalSink;
       document.getElementById('source-total').textContent = fmtMm(totalSource);
       document.getElementById('sink-total').textContent = fmtMm(totalSink);
+      document.getElementById('balance-net').textContent = fmtMm(net);
+      document.getElementById('balance-note').textContent =
+        `Proxy balance gap for ${{monthKey.slice(0, 7)}}: ${{fmtMm(net)}}. This should be read as a data/model reconciliation check, not as a closed physical balance.`;
     }}
 
     function renderNetworkHistory(edgeId) {{
@@ -1863,7 +1581,6 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       }}, 1100);
     }}
 
-    segmentSelect.addEventListener('change', event => renderChart(event.target.value));
     networkGasoducto.addEventListener('change', renderNetwork);
     networkCritical.addEventListener('change', renderNetwork);
     networkShowSources.addEventListener('change', renderNetwork);
@@ -1874,9 +1591,6 @@ def _render_network_html(payload: dict[str, Any]) -> str:
     renderDiagnostics();
     renderSolverSummary();
     renderNetwork();
-    if (data.forecast.chart_segments.length > 0) {{
-      renderChart(data.forecast.chart_segments[0].segmento);
-    }}
   </script>
 </body>
 </html>
