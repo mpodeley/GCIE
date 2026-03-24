@@ -129,7 +129,23 @@ def _sink_weights(roles_df: pd.DataFrame) -> dict[str, float]:
     }
 
 
-def _source_weights(roles_df: pd.DataFrame) -> dict[tuple[str, str], float]:
+def _source_fallback_weights(roles_df: pd.DataFrame) -> dict[str, float]:
+    sources = roles_df[roles_df["role_proxy"] == "source_proxy"].copy()
+    sources["weight_base"] = (
+        sources["avg_outflow_mm3_dia"]
+        .fillna(0.0)
+        .clip(lower=0.0)
+    )
+    total = float(sources["weight_base"].sum())
+    if total <= 0:
+        raise RuntimeError("F22 could not compute source weights from red_nodo_roles_proxy.")
+    return {
+        str(row["node_id"]): float(row["weight_base"]) / total
+        for _, row in sources.iterrows()
+    }
+
+
+def _source_weights_by_basin(roles_df: pd.DataFrame) -> dict[tuple[str, str], float]:
     source_names = set(roles_df[roles_df["role_proxy"] == "source_proxy"]["nombre"].astype(str))
     weights: dict[tuple[str, str], float] = {}
     for basin, basin_weights in BASIN_SOURCE_WEIGHTS.items():
@@ -146,6 +162,29 @@ def _source_weights(roles_df: pd.DataFrame) -> dict[tuple[str, str], float]:
     return weights
 
 
+def _monthly_observed_source_weights(
+    node_metrics_df: pd.DataFrame,
+    roles_df: pd.DataFrame,
+) -> pd.DataFrame:
+    source_node_ids = set(
+        roles_df.loc[roles_df["role_proxy"] == "source_proxy", "node_id"].astype(str)
+    )
+    observed = node_metrics_df.copy()
+    observed["fecha"] = pd.to_datetime(observed["fecha"]).dt.to_period("M").dt.to_timestamp()
+    observed["node_id"] = observed["node_id"].astype(str)
+    observed = observed[observed["node_id"].isin(source_node_ids)]
+    observed["weight_base"] = pd.to_numeric(observed["outflow_mm3_dia"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    observed = (
+        observed.groupby(["fecha", "node_id"], dropna=False)
+        .agg(weight_base=("weight_base", "sum"))
+        .reset_index()
+    )
+    observed["month_total"] = observed.groupby("fecha")["weight_base"].transform("sum")
+    observed = observed[observed["month_total"] > 0].copy()
+    observed["observed_source_share"] = observed["weight_base"] / observed["month_total"]
+    return observed[["fecha", "node_id", "observed_source_share"]]
+
+
 def _build_node_exogenous(
     roles_df: pd.DataFrame,
     node_metrics_df: pd.DataFrame,
@@ -154,16 +193,19 @@ def _build_node_exogenous(
     production_df: pd.DataFrame,
 ) -> pd.DataFrame:
     sink_weight_by_node = _sink_weights(roles_df)
-    source_weight_by_basin_node = _source_weights(roles_df)
+    source_fallback_weight_by_node = _source_fallback_weights(roles_df)
+    source_weight_by_basin_node = _source_weights_by_basin(roles_df)
+    monthly_source_weights = _monthly_observed_source_weights(node_metrics_df, roles_df)
 
     node_lookup = nodes_df.set_index("node_id")["nombre"].astype(str).to_dict()
     node_id_by_name = {str(name): node_id for node_id, name in node_lookup.items()}
+    source_name_by_node_id = {node_id: name for node_id, name in node_lookup.items() if node_id in source_fallback_weight_by_node}
 
     monthly_consumption = _monthly_consumption(consumption_df)
-    monthly_supply = _monthly_supply(production_df)
+    monthly_nc_supply = _monthly_supply(production_df)
 
-    supply_records: list[dict[str, object]] = []
-    for _, row in monthly_supply.iterrows():
+    nc_supply_records: list[dict[str, object]] = []
+    for _, row in monthly_nc_supply.iterrows():
         basin = str(row["cuenca"])
         for (weight_basin, node_name), weight in source_weight_by_basin_node.items():
             if weight_basin != basin:
@@ -171,12 +213,49 @@ def _build_node_exogenous(
             node_id = node_id_by_name.get(node_name)
             if node_id is None:
                 continue
-            supply_records.append(
+            nc_supply_records.append(
                 {
                     "fecha": row["fecha"],
                     "node_id": node_id,
-                    "supply_mm3_dia_proxy": float(row["supply_mm3_dia_proxy"]) * float(weight),
+                    "supply_non_conventional_mm3_dia_proxy": float(row["supply_mm3_dia_proxy"]) * float(weight),
+                }
+            )
+
+    total_supply_records: list[dict[str, object]] = []
+    source_weight_lookup = {
+        (pd.Timestamp(row["fecha"]), str(row["node_id"])): float(row["observed_source_share"])
+        for _, row in monthly_source_weights.iterrows()
+    }
+    source_node_ids = sorted(source_fallback_weight_by_node)
+    for _, row in monthly_consumption.iterrows():
+        fecha = pd.Timestamp(row["fecha"])
+        month_weights = {
+            node_id: source_weight_lookup.get((fecha, node_id))
+            for node_id in source_node_ids
+        }
+        if all(value is None for value in month_weights.values()):
+            normalized_weights = source_fallback_weight_by_node
+            source_method = "fallback_avg_source_outflow_weights"
+        else:
+            normalized_weights = {
+                node_id: value
+                for node_id, value in month_weights.items()
+                if value is not None and value > 0
+            }
+            total = sum(normalized_weights.values())
+            normalized_weights = {
+                node_id: value / total
+                for node_id, value in normalized_weights.items()
+            }
+            source_method = "observed_monthly_source_outflow_weights"
+        for node_id, weight in normalized_weights.items():
+            total_supply_records.append(
+                {
+                    "fecha": fecha,
+                    "node_id": node_id,
+                    "supply_mm3_dia_proxy": float(row["withdrawal_mm3_dia_proxy"]) * float(weight),
                     "withdrawal_mm3_dia_proxy": 0.0,
+                    "supply_method": source_method,
                 }
             )
 
@@ -189,10 +268,11 @@ def _build_node_exogenous(
                     "node_id": node_id,
                     "supply_mm3_dia_proxy": 0.0,
                     "withdrawal_mm3_dia_proxy": float(row["withdrawal_mm3_dia_proxy"]) * float(weight),
+                    "supply_method": None,
                 }
             )
 
-    exogenous = pd.DataFrame(supply_records + demand_records)
+    exogenous = pd.DataFrame(total_supply_records + demand_records)
     exogenous = (
         exogenous.groupby(["fecha", "node_id"], dropna=False)[
             ["supply_mm3_dia_proxy", "withdrawal_mm3_dia_proxy"]
@@ -200,6 +280,24 @@ def _build_node_exogenous(
         .sum()
         .reset_index()
     )
+    nc_supply = pd.DataFrame(nc_supply_records)
+    if nc_supply.empty:
+        nc_supply = pd.DataFrame(columns=["fecha", "node_id", "supply_non_conventional_mm3_dia_proxy"])
+    else:
+        nc_supply = (
+            nc_supply.groupby(["fecha", "node_id"], dropna=False)["supply_non_conventional_mm3_dia_proxy"]
+            .sum()
+            .reset_index()
+        )
+
+    supply_method_df = pd.DataFrame(total_supply_records)
+    if supply_method_df.empty:
+        supply_method_df = pd.DataFrame(columns=["fecha", "node_id", "supply_method"])
+    else:
+        supply_method_df = (
+            supply_method_df[supply_method_df["supply_mm3_dia_proxy"] > 0][["fecha", "node_id", "supply_method"]]
+            .drop_duplicates(subset=["fecha", "node_id"])
+        )
 
     observed = (
         node_metrics_df.assign(
@@ -215,13 +313,17 @@ def _build_node_exogenous(
         .reset_index()
     )
 
-    result = observed.merge(exogenous, on=["fecha", "node_id"], how="outer").fillna(
+    result = observed.merge(exogenous, on=["fecha", "node_id"], how="outer")
+    result = result.merge(nc_supply, on=["fecha", "node_id"], how="left")
+    result = result.merge(supply_method_df, on=["fecha", "node_id"], how="left")
+    result = result.fillna(
         {
             "observed_inflow_mm3_dia": 0.0,
             "observed_outflow_mm3_dia": 0.0,
             "observed_net_flow_mm3_dia": 0.0,
             "observed_throughput_mm3_dia": 0.0,
             "supply_mm3_dia_proxy": 0.0,
+            "supply_non_conventional_mm3_dia_proxy": 0.0,
             "withdrawal_mm3_dia_proxy": 0.0,
         }
     )
@@ -240,7 +342,7 @@ def _build_node_exogenous(
         on="node_id",
         how="left",
     )
-    result["source"] = "derived_from_consumo_diario_and_capitulo_iv_non_conventional"
+    result["source"] = "balanced_total_system_consumption_allocated_by_observed_source_shares"
     return result.sort_values(["fecha", "node_id"]).reset_index(drop=True)
 
 
