@@ -21,6 +21,7 @@
 **/.env.*
 
 # Data lake and pipeline runtime artifacts
+dist/
 **/duckdb/*.duckdb
 **/duckdb/*.db
 **/duckdb/*.wal

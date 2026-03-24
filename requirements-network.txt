@@ -1,0 +1,2 @@
+-r requirements.txt
+pandapipes>=0.12,<1
