@@ -3,7 +3,7 @@ F17 — Tipo de Cambio USD/ARS (BCRA API)
 Source: Banco Central de la República Argentina
 Tier 1 — Automated
 Table: tipo_cambio
-API: https://api.bcra.gob.ar/estadisticas/v2.0/DatosVariable/4/{desde}/{hasta}
+API: https://api.bcra.gob.ar/estadisticas/v4.0/monetarias/{idVariable}?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
 Variable 4 = TC minorista (vendedor BNA)
 No authentication required.
 """
@@ -18,7 +18,7 @@ import requests
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-BCRA_API_BASE = "https://api.bcra.gob.ar/estadisticas/v2.0/DatosVariable"
+BCRA_API_BASE = "https://api.bcra.gob.ar/estadisticas/v4.0/monetarias"
 VARIABLE_TC_MINORISTA = 4  # TC vendedor BNA
 
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw" / "bcra"
@@ -28,10 +28,11 @@ SNAPSHOTS_DIR = Path(__file__).parent.parent / "data" / "snapshots"
 
 def fetch_tc(desde: date, hasta: date) -> list[dict]:
     """Fetch exchange rate data from BCRA API for a date range."""
-    url = f"{BCRA_API_BASE}/{VARIABLE_TC_MINORISTA}/{desde.isoformat()}/{hasta.isoformat()}"
-    log.info(f"GET {url}")
+    url = f"{BCRA_API_BASE}/{VARIABLE_TC_MINORISTA}"
+    params = {"desde": desde.isoformat(), "hasta": hasta.isoformat()}
+    log.info(f"GET {url} params={params}")
 
-    resp = requests.get(url, timeout=30)
+    resp = requests.get(url, params=params, timeout=30)
 
     if resp.status_code == 404:
         log.warning(f"No data for range {desde} - {hasta}")
@@ -40,10 +41,16 @@ def fetch_tc(desde: date, hasta: date) -> list[dict]:
     resp.raise_for_status()
     data = resp.json()
 
-    # BCRA API returns: {"results": [{"fecha": "2024-01-02", "valor": 808.25}, ...]}
     results = data.get("results", [])
-    log.info(f"Got {len(results)} records")
-    return results
+    if not results:
+        return []
+
+    detail_rows = results[0].get("detalle", [])
+    if not isinstance(detail_rows, list):
+        raise RuntimeError("Unexpected BCRA v4 response shape: missing results[0].detalle list.")
+
+    log.info(f"Got {len(detail_rows)} records")
+    return detail_rows
 
 
 def fetch_historical(start_year: int = 2010) -> pd.DataFrame:
@@ -98,7 +105,7 @@ def fetch_incremental(last_date: date) -> pd.DataFrame:
 def save_snapshot(df: pd.DataFrame) -> Path:
     SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    content_hash = hashlib.sha256(df.to_json().encode()).hexdigest()[:8]
+    content_hash = hashlib.sha256(df.to_csv(index=False).encode()).hexdigest()[:8]
     path = SNAPSHOTS_DIR / f"tipo_cambio_{ts}_{content_hash}.parquet"
     df.to_parquet(path, index=False)
     log.info(f"Snapshot: {path} ({len(df):,} rows)")
@@ -133,6 +140,11 @@ def run(historical: bool = False, start_year: int = 2010):
             df = df.drop_duplicates(subset=["fecha"]).sort_values("fecha").reset_index(drop=True)
         else:
             df = existing
+
+    if df.empty:
+        raise RuntimeError(
+            "BCRA fetch produced no rows. Refusing to overwrite processed data with an empty snapshot."
+        )
 
     log.info(f"Total records: {len(df):,}, range: {df['fecha'].min()} → {df['fecha'].max()}")
 

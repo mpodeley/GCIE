@@ -4,10 +4,16 @@ Source: Secretaría de Energía / datos.gob.ar
 Tier 1 — Automated
 Tables: produccion_diaria, gas_asociado_ratio
 """
+
+from __future__ import annotations
+
 import hashlib
+import io
 import logging
+import zipfile
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import requests
@@ -15,117 +21,134 @@ import requests
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# URLs estables del recurso CSV en datos.gob.ar
-URL_DESDE_2019 = "https://datos.gob.ar/dataset/energia-produccion-petroleo-gas-sesco/archivo/energia_3752bb79-7229-4a3b-8f61-c617bfb17677"
-URL_HASTA_2008 = "https://datos.gob.ar/dataset/energia-produccion-petroleo-gas-sesco/archivo/energia_f4cf0c95-68c7-476e-b279-89e0d43b1b71"
+# Resource page and direct ZIP payload currently served by datos.gob.ar / energia.gob.ar.
+RESOURCE_PAGE_DESDE_2019 = "https://datos.gob.ar/dataset/energia-produccion-petroleo-gas-sesco/archivo/energia_3752bb79-7229-4a3b-8f61-c617bfb17677"
+ZIP_URL_DESDE_2019 = "http://www.energia.gob.ar/contenidos/archivos/Reorganizacion/informacion_del_mercado/mercado_hidrocarburos/tablas_dinamicas/upstream/sescoweb_produccion.zip"
 
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw" / "sesco"
 PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
 SNAPSHOTS_DIR = Path(__file__).parent.parent / "data" / "snapshots"
 
-CUENCAS_RELEVANTES = ["NEUQUINA", "AUSTRAL", "NOROESTE"]
+MONTH_MAP = {
+    "enero": 1,
+    "febrero": 2,
+    "marzo": 3,
+    "abril": 4,
+    "mayo": 5,
+    "junio": 6,
+    "julio": 7,
+    "agosto": 8,
+    "septiembre": 9,
+    "setiembre": 9,
+    "octubre": 10,
+    "noviembre": 11,
+    "diciembre": 12,
+}
 
 
-def download_csv(url: str, dest_path: Path) -> Path:
-    """Download CSV from datos.gob.ar. Returns path to saved file."""
+def download_zip(url: str, dest_path: Path) -> Path:
+    """Download the current SESCO ZIP workbook. Returns path to saved file."""
     log.info(f"Downloading {url}")
-    # datos.gob.ar sometimes redirects to actual CSV; follow redirects
     resp = requests.get(url, timeout=120, allow_redirects=True)
     resp.raise_for_status()
 
-    # Detect actual CSV URL from redirect or content
     content = resp.content
     sha = hashlib.sha256(content).hexdigest()[:8]
-    fname = dest_path / f"sesco_{datetime.now().strftime('%Y%m%d')}_{sha}.csv"
+    fname = dest_path / f"sesco_{datetime.now().strftime('%Y%m%d')}_{sha}.zip"
     fname.write_bytes(content)
     log.info(f"Saved {len(content):,} bytes → {fname}")
     return fname
 
 
-def parse_sesco(csv_path: Path) -> pd.DataFrame:
-    """Parse SESCO CSV into normalized DataFrame."""
-    # SESCO CSVs typically use ; separator and Latin-1 encoding
-    df = None
-    for sep in [";", ","]:
-        for enc in ["latin-1", "utf-8", "utf-8-sig"]:
-            try:
-                df = pd.read_csv(csv_path, sep=sep, encoding=enc, low_memory=False)
-                if len(df.columns) > 3:
-                    log.info(f"Parsed with sep={sep!r} enc={enc}: {len(df):,} rows, {len(df.columns)} cols")
-                    break
-            except Exception:
-                continue
-        if df is not None and len(df.columns) > 3:
-            break
-
-    if df is None or len(df.columns) <= 3:
-        raise ValueError(f"Could not parse {csv_path}")
-
-    # Normalize column names
-    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-    return df
+def _read_workbook(zip_path: Path) -> dict[str, pd.DataFrame]:
+    with zipfile.ZipFile(zip_path) as zf:
+        xlsx_members = [name for name in zf.namelist() if name.lower().endswith(".xlsx")]
+        if not xlsx_members:
+            raise ValueError(f"No .xlsx workbook found inside {zip_path}")
+        workbook_bytes = io.BytesIO(zf.read(xlsx_members[0]))
+    return {
+        "oil": pd.read_excel(workbook_bytes, sheet_name="Producción Oil m3", header=None),
+        "gas": pd.read_excel(io.BytesIO(workbook_bytes.getvalue()), sheet_name="Producción Gas miles m3", header=None),
+    }
 
 
-def normalize_produccion(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize raw SESCO DataFrame to produccion_diaria schema."""
-    # Detect date column (varies across SESCO versions)
-    date_cols = [c for c in df.columns if "fecha" in c or "periodo" in c or "anio" in c or "año" in c]
-    if not date_cols:
-        raise ValueError(f"No date column found. Columns: {list(df.columns)}")
+def _extract_year(raw_sheet: pd.DataFrame) -> int:
+    year_rows = raw_sheet[raw_sheet[0].astype(str).str.strip().str.lower() == "año"]
+    if year_rows.empty:
+        raise ValueError("Could not locate 'Año' filter row in SESCO workbook.")
+    return int(year_rows.iloc[0, 1])
 
-    date_col = date_cols[0]
-    log.info(f"Date column: {date_col}")
 
-    # Detect production columns
-    gas_cols = [c for c in df.columns if "gas" in c and ("produc" in c or "mm3" in c or "miles" in c or "volumen" in c)]
-    oil_cols = [c for c in df.columns if ("petroleo" in c or "petróleo" in c or "crude" in c) and ("produc" in c or "volumen" in c)]
+def _extract_monthly_table(raw_sheet: pd.DataFrame, value_column_name: str) -> pd.DataFrame:
+    header_index = raw_sheet.index[
+        raw_sheet[0].astype(str).str.strip().str.lower() == "empresa"
+    ]
+    if len(header_index) == 0:
+        raise ValueError("Could not locate the 'empresa' header row in SESCO workbook.")
 
-    log.info(f"Gas cols: {gas_cols}")
-    log.info(f"Oil cols: {oil_cols}")
+    start = int(header_index[0])
+    year = _extract_year(raw_sheet)
+    header_row = raw_sheet.iloc[start].tolist()
+    data = raw_sheet.iloc[start + 1 :].copy()
+    data.columns = header_row
+    data = data.rename(columns={"empresa": "operador"})
+    data = data.dropna(subset=["operador"])
+    data["operador"] = data["operador"].astype(str).str.strip()
+    data = data[data["operador"] != ""]
+    data = data[~data["operador"].str.lower().str.startswith("total")]
 
-    # Build normalized output
-    result = pd.DataFrame()
-    result["fecha"] = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
+    month_columns = [
+        column
+        for column in data.columns
+        if isinstance(column, str) and column.strip().lower() in MONTH_MAP
+    ]
+    if not month_columns:
+        raise ValueError("Could not locate monthly value columns in SESCO workbook.")
 
-    # Cuenca
-    cuenca_col = next((c for c in df.columns if "cuenca" in c), None)
-    if cuenca_col:
-        result["cuenca"] = df[cuenca_col].str.upper().str.strip()
+    long_df = data.melt(
+        id_vars=["operador"],
+        value_vars=month_columns,
+        var_name="mes_nombre",
+        value_name=value_column_name,
+    )
+    long_df[value_column_name] = pd.to_numeric(long_df[value_column_name], errors="coerce")
+    long_df = long_df.dropna(subset=[value_column_name])
+    long_df["month"] = long_df["mes_nombre"].astype(str).str.strip().str.lower().map(MONTH_MAP)
+    long_df = long_df.dropna(subset=["month"])
+    long_df["fecha"] = pd.to_datetime(
+        {
+            "year": year,
+            "month": long_df["month"].astype(int),
+            "day": 1,
+        }
+    )
+    return long_df[["fecha", "operador", value_column_name]].reset_index(drop=True)
 
-    # Empresa/operador
-    emp_col = next((c for c in df.columns if "empresa" in c or "operador" in c), None)
-    if emp_col:
-        result["operador"] = df[emp_col].str.strip()
 
-    # Yacimiento
-    yac_col = next((c for c in df.columns if "yacimiento" in c), None)
-    if yac_col:
-        result["yacimiento_id"] = df[yac_col].str.strip()
+def normalize_produccion(zip_path: Path) -> pd.DataFrame:
+    """Normalize the current SESCO workbook into a monthly production table."""
+    sheets = _read_workbook(zip_path)
+    oil_df = _extract_monthly_table(sheets["oil"], "petroleo_m3")
+    gas_df = _extract_monthly_table(sheets["gas"], "gas_miles_m3")
 
-    # Formación
-    form_col = next((c for c in df.columns if "formac" in c), None)
-    if form_col:
-        result["formacion"] = df[form_col].str.strip()
-
-    # Producción gas (en miles m3 → convertir a mm3/d aproximado)
-    if gas_cols:
-        result["gas_miles_m3"] = pd.to_numeric(df[gas_cols[0]], errors="coerce")
-
-    # Producción petróleo (en m3)
-    if oil_cols:
-        result["petroleo_m3"] = pd.to_numeric(df[oil_cols[0]], errors="coerce")
-
-    # Drop rows without fecha
-    result = result.dropna(subset=["fecha"])
-
-    # Filter relevant basins if cuenca column exists
-    if "cuenca" in result.columns and len(result) > 0:
-        mask = result["cuenca"].isin(CUENCAS_RELEVANTES)
-        n_before = len(result)
-        result = result[mask]
-        log.info(f"Filtered to relevant basins: {n_before} → {len(result)} rows")
-
-    return result.reset_index(drop=True)
+    result = oil_df.merge(gas_df, on=["fecha", "operador"], how="outer")
+    result["cuenca"] = None
+    result["yacimiento_id"] = None
+    result["formacion"] = None
+    result["tipo_gas"] = "unknown"
+    result = result[
+        [
+            "fecha",
+            "cuenca",
+            "operador",
+            "yacimiento_id",
+            "formacion",
+            "tipo_gas",
+            "gas_miles_m3",
+            "petroleo_m3",
+        ]
+    ]
+    return result.sort_values(["fecha", "operador"]).reset_index(drop=True)
 
 
 def calculate_gor(df: pd.DataFrame) -> pd.DataFrame:
@@ -134,11 +157,13 @@ def calculate_gor(df: pd.DataFrame) -> pd.DataFrame:
     GOR = gas_total / petroleo_total per basin per month.
     High GOR = gas asociado is significant fraction of production.
     """
-    if "cuenca" not in df.columns or "gas_miles_m3" not in df.columns or "petroleo_m3" not in df.columns:
+    if "gas_miles_m3" not in df.columns or "petroleo_m3" not in df.columns:
         log.warning("Missing columns for GOR calculation")
         return pd.DataFrame()
 
     df["year_month"] = df["fecha"].dt.to_period("M")
+    if "cuenca" not in df.columns or df["cuenca"].isna().all():
+        df["cuenca"] = "ALL"
 
     gor_df = (
         df.groupby(["year_month", "cuenca"])
@@ -169,7 +194,7 @@ def save_snapshot(df: pd.DataFrame, table_name: str) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Calculate hash of content
-    content_hash = hashlib.sha256(df.to_json().encode()).hexdigest()[:8]
+    content_hash = hashlib.sha256(df.to_csv(index=False).encode()).hexdigest()[:8]
     path = SNAPSHOTS_DIR / f"{table_name}_{ts}_{content_hash}.parquet"
     df.to_parquet(path, index=False)
     log.info(f"Snapshot saved: {path} ({len(df):,} rows)")
@@ -182,16 +207,17 @@ def run():
 
     log.info("=== F01 SESCO Production Scraper ===")
 
-    # Download main dataset (from 2019)
+    log.info(f"Source page: {RESOURCE_PAGE_DESDE_2019}")
+
+    # Download current workbook payload (from 2019 resource page)
     try:
-        csv_path = download_csv(URL_DESDE_2019, RAW_DIR)
+        zip_path = download_zip(ZIP_URL_DESDE_2019, RAW_DIR)
     except Exception as e:
         log.error(f"Download failed: {e}")
         raise
 
     # Parse and normalize
-    raw_df = parse_sesco(csv_path)
-    prod_df = normalize_produccion(raw_df)
+    prod_df = normalize_produccion(zip_path)
 
     log.info(f"Normalized produccion: {len(prod_df):,} rows, date range: {prod_df['fecha'].min()} → {prod_df['fecha'].max()}")
 
