@@ -253,6 +253,78 @@ Headers: token: {tu_token}
 
 ---
 
+## CAPAS DERIVADAS — Red Canónica y Modelado
+
+Estas capas no son “fuentes externas” nuevas, sino productos derivados del SP0 que consolidan geometría, operación y supuestos de modelado para la red troncal. Son críticas para pasar de datasets sueltos a un modelo auditable de deliverability.
+
+### F20. Red de Transporte Modelada (ENARGAS Power BI)
+
+| Campo | Detalle |
+|-------|---------|
+| **Origen** | ENARGAS Power BI público + rutas operativas |
+| **Formato base** | JSON / tablas derivadas a Parquet |
+| **Tablas destino en DL** | `red_nodos`, `red_tramos`, `red_tramo_alias`, `red_tramo_metricas_mensuales` |
+| **Valor para el proyecto** | Convierte el mapa interactivo en un grafo operativo mensual, con flujo, capacidad y utilización por ruta. Es la base de la capa física del proyecto. |
+| **Estado actual** | Implementado. Se usa Web Mercator (`x_mercator`, `y_mercator`) para visualización y cálculo geométrico básico en dashboard y red canónica. |
+
+### F20b. Red Canónica con Overrides Manuales
+
+| Campo | Detalle |
+|-------|---------|
+| **Origen** | `F20` + templates manuales versionados |
+| **Templates** | `red_nodos_override.csv`, `red_tramos_override.csv` |
+| **Tablas destino en DL** | `red_nodos_canonica`, `red_tramos_canonica`, `red_tramo_alias_canonica`, `red_topologia_diagnostico` |
+| **Valor para el proyecto** | Separa `red_observada` de `red_canonica`, permite incorporar activos faltantes, renombres, conexiones inferidas y diagnósticos de topología sin tocar el scraper crudo. |
+| **Estado actual** | Implementado. Incluye un corredor canónico inicial de Perito Moreno y soporte para capacidad, diámetro y longitud override por tramo. |
+
+### F21. Balance Nodal de la Red
+
+| Campo | Detalle |
+|-------|---------|
+| **Origen** | `F20/F20b` + métricas por tramo |
+| **Tablas destino en DL** | `red_nodo_metricas_mensuales`, `red_nodo_roles_proxy` |
+| **Valor para el proyecto** | Deriva inflow, outflow, throughput y rol proxy (`source/sink/transit`) por nodo, necesarios para ubicar oferta y demanda sobre la red. |
+| **Estado actual** | Implementado. Base del escenario exógeno y de la simulación `F23`. |
+
+### F22. Escenario Base de Oferta/Demanda sobre la Red
+
+| Campo | Detalle |
+|-------|---------|
+| **Origen** | `F21` + `pozos_no_convencional` + `consumo_diario_enargas` |
+| **Tablas destino en DL** | `red_nodo_exogenos_mensuales`, `red_balance_escenario_mensual` |
+| **Valor para el proyecto** | Inyecta supply y withdrawals proxy sobre nodos de la red y permite medir balance agregado antes de resolver despacho. |
+| **Estado actual** | Implementado. Se usa como input de `F23` y del runner `pandapipes`. |
+
+### F23. Simulación Base de Red Canónica
+
+| Campo | Detalle |
+|-------|---------|
+| **Origen** | `F20b` + `F22` + métricas observadas |
+| **Tablas destino en DL** | `red_solver_tramos_mensuales`, `red_solver_balance_nodal_mensual`, `red_solver_resumen_mensual`, `red_pandapipes_junctions`, `red_pandapipes_pipes` |
+| **Valor para el proyecto** | Primer solver heurístico auditable sobre la red. Cuantifica tramos saturados, demanda no abastecida y oferta curtailada, además de exportar una red `pandapipes-ready`. |
+| **Estado actual** | Implementado. La heurística ya identifica cuellos útiles, pero la corrida hidráulica completa en `pandapipes` todavía no converge. |
+
+### F24. Activos Físicos de Refuerzo
+
+| Campo | Detalle |
+|-------|---------|
+| **Origen** | Templates manuales con datos oficiales y supuestos explícitos |
+| **Templates** | `red_compresoras_override.csv`, `red_loops_override.csv` |
+| **Tablas destino en DL** | `red_compresoras_canonica`, `red_loops_canonica`, `red_tramos_parametros_canonica` |
+| **Valor para el proyecto** | Separa la red geométrica de los activos operativos que alteran deliverability: compresoras, loops y capacidad efectiva de tramo. |
+| **Estado actual** | Implementado. Incluye semillas para Tratayén, Salliqueló, Mercedes, Ferreyra, Deán Funes, Lavalle y Lumbreras, además de loops iniciales para Mercedes/NEUBA y expansión planificada de Perito Moreno. |
+
+### Estado de visualización y monitoreo
+
+| Campo | Detalle |
+|-------|---------|
+| **Dashboard** | `gas-intel-meta/dashboard/index.html` |
+| **Generador** | `gas-intel-meta/scripts/build_dashboard.py` |
+| **Capacidades actuales** | Vista ejecutiva de SP1, inventario del datalake, red canónica visual, rutas más estresadas, diagnósticos topológicos y snapshot del solver. |
+| **Objetivo** | Hacer visible el estado del proyecto sin entrar al código ni a DuckDB. |
+
+---
+
 ## TIER 3 — Manual
 
 ### F13. TGS / TGN — Informes de Capacidad y Concursos
@@ -408,3 +480,5 @@ sp0-datalake/
 2. **MEGSA acceso:** Es el dato más valioso y el más difícil de obtener. Sin acceso de agente, solo se tienen los reportes PPP públicos (limitados). Escalar con equipo comercial Pluspetrol como P0.
 3. **ENARGAS datos desactualizados:** Varios datasets en datos.gob.ar llevan >2 años sin actualización. Verificar frescura antes de invertir tiempo de scraper.
 4. **Cambio de gobierno / reestructuración SE:** Las URLs y estructuras de datos del gobierno argentino cambian con cada cambio de gestión. Diseñar scrapers resilientes (detectar error → alertar → no fallar silenciosamente).
+5. **Topología y parámetros físicos incompletos:** La red observada no siempre trae tramos, loops, compresoras ni geometría suficiente para un solver hidráulico. Mitigation: mantener `red_canonica` versionada, explicitar supuestos de modelado y distinguir `official_project_data` de `modeling_assumption`.
+6. **Proyección geográfica:** `lat/lon` sirve como referencia geográfica, pero distancias y geometría de red deben operar sobre coordenadas métricas (`x_mercator/y_mercator` hoy; potencialmente UTM/nacional en una etapa siguiente). No mezclar grados con longitudes físicas.
