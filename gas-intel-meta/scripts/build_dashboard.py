@@ -16,6 +16,18 @@ DATALAKE_DIR = ROOT / "gas-intel-datalake"
 PROCESSED_DIR = DATALAKE_DIR / "data" / "processed"
 DUCKDB_PATH = DATALAKE_DIR / "duckdb" / "gas_intel.duckdb"
 OUTPUT_PATH = ROOT / "gas-intel-meta" / "dashboard" / "index.html"
+ASSETS_DIR = ROOT / "gas-intel-meta" / "assets"
+OUTLINE_PATH = ASSETS_DIR / "argentina-outline-3857.json"
+CLAUDE_DOCS = [
+    ("gas-intel-datalake", ROOT / "gas-intel-datalake" / "CLAUDE.md"),
+    ("gas-intel-forecast", ROOT / "gas-intel-forecast" / "CLAUDE.md"),
+    ("gas-intel-supply", ROOT / "gas-intel-supply" / "CLAUDE.md"),
+    ("gas-intel-pricing", ROOT / "gas-intel-pricing" / "CLAUDE.md"),
+    ("gas-intel-risk", ROOT / "gas-intel-risk" / "CLAUDE.md"),
+    ("gas-intel-scoring", ROOT / "gas-intel-scoring" / "CLAUDE.md"),
+    ("gas-intel-portfolio", ROOT / "gas-intel-portfolio" / "CLAUDE.md"),
+    ("gas-intel-meta", ROOT / "gas-intel-meta" / "CLAUDE.md"),
+]
 
 
 def _import_duckdb() -> Any:
@@ -26,6 +38,85 @@ def _import_duckdb() -> Any:
             "duckdb is required to build the dashboard. Run this script with the GCIE virtualenv."
         ) from exc
     return duckdb
+
+
+def _extract_markdown_section(text: str, heading: str) -> str | None:
+    marker = f"## {heading}"
+    if marker not in text:
+        return None
+    section = text.split(marker, maxsplit=1)[1]
+    next_heading = section.find("\n## ")
+    if next_heading != -1:
+        section = section[:next_heading]
+    section = section.strip()
+    return section or None
+
+
+def _first_meaningful_line(text: str | None) -> str | None:
+    if not text:
+        return None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("- "):
+            return line[2:].strip()
+        if line.startswith("|"):
+            continue
+        return line
+    return None
+
+
+def _load_project_status() -> dict[str, Any]:
+    root_text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    summary = _first_meaningful_line(_extract_markdown_section(root_text, "Project overview")) or ""
+    roadmap = _first_meaningful_line(_extract_markdown_section(root_text, "Near-term roadmap")) or ""
+
+    cards = []
+    for repo, path in CLAUDE_DOCS:
+        text = path.read_text(encoding="utf-8")
+        title = text.splitlines()[0].lstrip("# ").strip()
+        role = _first_meaningful_line(_extract_markdown_section(text, "Role")) or ""
+        current = (
+            _first_meaningful_line(_extract_markdown_section(text, "Current implementation"))
+            or _first_meaningful_line(_extract_markdown_section(text, "Current state"))
+            or _first_meaningful_line(_extract_markdown_section(text, "What exists today"))
+            or role
+        )
+        score = _first_meaningful_line(_extract_markdown_section(text, "Current score"))
+        next_step = (
+            _first_meaningful_line(_extract_markdown_section(text, "Near-term research direction"))
+            or _first_meaningful_line(_extract_markdown_section(text, "Near-term direction"))
+            or _first_meaningful_line(_extract_markdown_section(text, "Current gap"))
+            or _first_meaningful_line(_extract_markdown_section(text, "Implementation rule"))
+            or ""
+        )
+        cards.append(
+            {
+                "repo": repo,
+                "title": title,
+                "role": role,
+                "current": current,
+                "score": score,
+                "next_step": next_step,
+            }
+        )
+
+    return {
+        "summary": summary,
+        "roadmap": roadmap,
+        "cards": cards,
+    }
+
+
+def _load_argentina_outline() -> dict[str, Any]:
+    if not OUTLINE_PATH.exists():
+        return {"polygons": []}
+    raw = json.loads(OUTLINE_PATH.read_text(encoding="utf-8"))
+    polygons = []
+    for polygon in raw.get("polygons", []):
+        polygons.append([{"x": point["x"], "y": point["y"]} for point in polygon])
+    return {"polygons": polygons}
 
 
 def _load_forecast_summary() -> dict[str, Any]:
@@ -644,6 +735,43 @@ def _render_html(payload: dict[str, Any]) -> str:
       display: grid;
       gap: 8px;
     }}
+    .status-grid {{
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 0;
+    }}
+    .status-card {{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(255,255,255,0.78);
+      display: grid;
+      gap: 10px;
+      min-height: 220px;
+    }}
+    .status-kicker {{
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      color: var(--accent);
+      font-weight: 700;
+    }}
+    .country-fill {{
+      fill: rgba(36,48,65,0.05);
+    }}
+    .country-outline {{
+      fill: none;
+      stroke: rgba(36,48,65,0.28);
+      stroke-width: 1.2;
+      stroke-linejoin: round;
+    }}
+    .map-ocean {{
+      fill: rgba(31,111,95,0.04);
+    }}
+    .map-frame {{
+      fill: none;
+      stroke: rgba(36,48,65,0.08);
+      stroke-width: 1.4;
+    }}
     .route-item {{
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -701,6 +829,16 @@ def _render_html(payload: dict[str, Any]) -> str:
     </div>
 
     <section class="grid" id="top-cards"></section>
+
+    <section class="panel stack">
+      <div class="toolbar">
+        <div>
+          <h2>Project State</h2>
+          <p id="project-summary"></p>
+        </div>
+      </div>
+      <section class="grid status-grid" id="project-status-grid"></section>
+    </section>
 
     <section class="panel stack">
       <div class="toolbar">
@@ -870,6 +1008,30 @@ def _render_html(payload: dict[str, Any]) -> str:
       el.className = 'panel';
       el.innerHTML = `<div class="small">${{label}}</div><div class="value">${{fmtInt(value)}}</div>`;
       cardsNode.appendChild(el);
+    }});
+
+    const projectSummaryNode = document.getElementById('project-summary');
+    projectSummaryNode.textContent = `${{data.project.summary}} ${{data.project.roadmap ? 'Next: ' + data.project.roadmap : ''}}`;
+    const projectGridNode = document.getElementById('project-status-grid');
+    data.project.cards.forEach(item => {{
+      const el = document.createElement('article');
+      el.className = 'status-card';
+      el.innerHTML = `
+        <div class="status-kicker">${{item.repo}}</div>
+        <div>
+          <div class="route-title">${{item.title}}</div>
+          <p class="small">${{item.role}}</p>
+        </div>
+        <div>
+          <div class="small">Current</div>
+          <div>${{item.current || '-'}}</div>
+        </div>
+        <div>
+          <div class="small">Signal</div>
+          <div>${{item.score || item.next_step || '-'}}</div>
+        </div>
+      `;
+      projectGridNode.appendChild(el);
     }});
 
     const datalakeNode = document.getElementById('datalake-table');
@@ -1085,8 +1247,10 @@ def _render_html(payload: dict[str, Any]) -> str:
       return 'var(--stress-1)';
     }}
 
-    function projectNetwork(nodes, edges) {{
-      const allPoints = nodes.map(node => [node.x_mercator, node.y_mercator]).filter(point => point[0] != null && point[1] != null);
+    function projectNetwork(nodes, edges, outlinePolygons) {{
+      const nodePoints = nodes.map(node => [node.x_mercator, node.y_mercator]).filter(point => point[0] != null && point[1] != null);
+      const outlinePoints = outlinePolygons.flatMap(polygon => polygon.map(point => [point.x, point.y]));
+      const allPoints = [...nodePoints, ...outlinePoints];
       const xs = allPoints.map(point => point[0]);
       const ys = allPoints.map(point => point[1]);
       const bounds = {{
@@ -1109,16 +1273,21 @@ def _render_html(payload: dict[str, Any]) -> str:
         x: offsetX + (x - bounds.minX) * scale,
         y: height - (offsetY + (y - bounds.minY) * scale),
       }});
+      const polygonPath = polygon => polygon.map((point, idx) => {{
+        const projected = project(point.x, point.y);
+        return `${{idx === 0 ? 'M' : 'L'}} ${{projected.x}} ${{projected.y}}`;
+      }}).join(' ') + ' Z';
       const nodeMap = new Map(nodes.map(node => [node.node_id, {{ ...node, ...project(node.x_mercator, node.y_mercator) }}]));
       const projectedEdges = edges.map(edge => ({{
         ...edge,
         start: nodeMap.get(edge.source_node_id),
         end: nodeMap.get(edge.target_node_id),
       }})).filter(edge => edge.start && edge.end);
-      return {{ nodes: Array.from(nodeMap.values()), edges: projectedEdges }};
+      const countryPath = outlinePolygons.map(polygonPath).join(' ');
+      return {{ nodes: Array.from(nodeMap.values()), edges: projectedEdges, countryPath }};
     }}
 
-    const projectedNetwork = projectNetwork(data.network.nodes, data.network.edges);
+    const projectedNetwork = projectNetwork(data.network.nodes, data.network.edges, data.outline.polygons);
     data.network.available_months.forEach((month, idx) => {{
       const option = document.createElement('option');
       option.value = month;
@@ -1304,8 +1473,11 @@ def _render_html(payload: dict[str, Any]) -> str:
       }}).join('');
 
       networkMap.innerHTML = `
-        <rect x="0" y="0" width="920" height="760" rx="18" fill="transparent" />
+        <rect x="0" y="0" width="920" height="760" rx="18" class="map-ocean" />
         ${{grid}}
+        <path d="${{projectedNetwork.countryPath}}" class="country-fill" />
+        <rect x="32" y="32" width="856" height="696" rx="26" class="map-frame" />
+        <path d="${{projectedNetwork.countryPath}}" class="country-outline" />
         ${{edgesMarkup}}
         ${{nodesMarkup}}
       `;
@@ -1385,6 +1557,8 @@ def main() -> None:
         "forecast": _load_forecast_summary(),
         "datalake": _load_datalake_summary(),
         "network": _load_network_summary(),
+        "project": _load_project_status(),
+        "outline": _load_argentina_outline(),
         "results": _load_results_table(FORECAST_DIR / "results.tsv"),
     }
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
