@@ -944,6 +944,10 @@ def _render_network_html(payload: dict[str, Any]) -> str:
               <div class="small">Topology / Provenance</div>
               <div class="mono" id="network-status" style="margin-top:8px"></div>
             </div>
+            <div class="explain-card" style="margin-top:10px">
+              <div class="small">Supply Breakdown</div>
+              <div class="mono" id="network-breakdown" style="margin-top:8px"></div>
+            </div>
           </div>
           <div class="explain-card">
             <div class="small">Most Stressed Routes</div>
@@ -1316,6 +1320,7 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       document.getElementById('network-capacity').textContent = '-';
       document.getElementById('network-loops').textContent = '-';
       document.getElementById('network-status').textContent = '-';
+      document.getElementById('network-breakdown').textContent = '-';
       networkHistoryChart.innerHTML = '';
     }}
 
@@ -1347,6 +1352,12 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       document.getElementById('network-loops').textContent = fmtMm(exogenous?.exogenous_net_mm3_dia_proxy);
       document.getElementById('network-status').textContent =
         `source_confidence=${{node.source_confidence}} | topology_status=${{node.topology_status}} | source=${{exogenous?.source || 'n/a'}} | supply_method=${{exogenous?.supply_method || 'n/a'}}`;
+      document.getElementById('network-breakdown').textContent = [
+        `conv=${{fmtMm(exogenous?.supply_conventional_mm3_dia_proxy)}}`,
+        `nc=${{fmtMm(exogenous?.supply_non_conventional_mm3_dia_proxy)}}`,
+        `bolivia=${{fmtMm(exogenous?.supply_import_bolivia_mm3_dia_proxy)}}`,
+        `lng=${{fmtMm(exogenous?.supply_lng_mm3_dia_proxy)}}`,
+      ].join(' | ');
       networkHistoryChart.innerHTML = '';
       [...document.querySelectorAll('.route-item')].forEach(item => item.classList.remove('is-active'));
     }}
@@ -1373,6 +1384,7 @@ def _render_network_html(payload: dict[str, Any]) -> str:
       document.getElementById('network-loops').textContent = `${{edge.active_loop_count || 0}} active loops`;
       document.getElementById('network-status').textContent =
         `source_confidence=${{edge.source_confidence}} | topology_status=${{edge.topology_status}}`;
+      document.getElementById('network-breakdown').textContent = '-';
       renderNetworkHistory(edge.edge_id);
       [...document.querySelectorAll('.route-item')].forEach(item => {{
         item.classList.toggle('is-active', item.dataset.edgeId === edge.edge_id);
