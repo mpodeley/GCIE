@@ -28,17 +28,43 @@ def _import_duckdb() -> Any:
 
 def _load_forecast_summary() -> dict[str, Any]:
     sys.path.insert(0, str(FORECAST_DIR))
+    from data_pipeline import load_dataset  # type: ignore
     from evaluate import score_run  # type: ignore
 
+    dataset = load_dataset()
     result = score_run()
     predictions = result["predictions"]
+    validation_lookup = {
+        (str(row["fecha"]), row["segmento"]): row for row in dataset["validation_rows"]
+    }
     segment_errors: dict[str, list[float]] = {}
+    segment_series: dict[str, list[dict[str, Any]]] = {}
     for row in predictions:
         actual = float(row["actual_volume"])
         predicted = float(row["predicted_volume"])
         if actual <= 0:
             continue
-        segment_errors.setdefault(row["segmento"], []).append(abs(actual - predicted) / actual)
+        ape = abs(actual - predicted) / actual
+        segment_errors.setdefault(row["segmento"], []).append(ape)
+        feature_row = validation_lookup[(str(row["fecha"]), row["segmento"])]
+        segment_series.setdefault(row["segmento"], []).append(
+            {
+                "fecha": str(row["fecha"]),
+                "segmento": row["segmento"],
+                "actual_volume": int(actual),
+                "predicted_volume": int(predicted),
+                "ape": ape,
+                "hdd": None if feature_row["hdd"] is None else round(float(feature_row["hdd"]), 2),
+                "cdd": None if feature_row["cdd"] is None else round(float(feature_row["cdd"]), 2),
+                "temp_media": None
+                if feature_row["temp_media"] is None
+                else round(float(feature_row["temp_media"]), 2),
+                "lag_values": {
+                    lag_key: int(feature_row[lag_key])
+                    for lag_key in result["model_artifacts"]["lag_keys"]
+                },
+            }
+        )
 
     by_segment = [
         {
@@ -59,6 +85,14 @@ def _load_forecast_summary() -> dict[str, Any]:
         for row in predictions
     ]
 
+    chart_segments = [
+        {
+            "segmento": segment,
+            "points": sorted(points, key=lambda item: item["fecha"]),
+        }
+        for segment, points in sorted(segment_series.items())
+    ]
+
     return {
         "hypothesis": result["hypothesis"],
         "metric_name": result["metric_name"],
@@ -68,6 +102,7 @@ def _load_forecast_summary() -> dict[str, Any]:
         "model_artifacts": result["model_artifacts"],
         "by_segment": by_segment,
         "recent_predictions": recent_predictions,
+        "chart_segments": chart_segments,
     }
 
 
@@ -168,6 +203,73 @@ def _render_html(payload: dict[str, Any]) -> str:
       grid-template-columns: 1.1fr 0.9fr;
       margin-bottom: 24px;
     }}
+    .stack {{
+      display: grid;
+      gap: 16px;
+      margin-bottom: 24px;
+    }}
+    .chart-shell {{
+      display: grid;
+      gap: 14px;
+      grid-template-columns: 1.5fr 0.8fr;
+      align-items: start;
+    }}
+    .toolbar {{
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }}
+    select {{
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: white;
+      color: var(--ink);
+      font: inherit;
+    }}
+    .viz {{
+      width: 100%;
+      min-height: 320px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background:
+        linear-gradient(180deg, rgba(31,111,95,0.04), transparent 42%),
+        white;
+      padding: 12px;
+    }}
+    .legend {{
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }}
+    .legend span::before {{
+      content: "";
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      margin-right: 6px;
+    }}
+    .legend .actual::before {{ background: var(--accent); }}
+    .legend .pred::before {{ background: var(--accent-2); }}
+    .explain-grid {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 12px;
+    }}
+    .explain-card {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(255,255,255,0.85);
+    }}
+    .mono {{ font-family: "IBM Plex Mono", "SFMono-Regular", monospace; }}
     .badge {{
       display: inline-block;
       padding: 4px 10px;
@@ -178,7 +280,7 @@ def _render_html(payload: dict[str, Any]) -> str:
       font-weight: 700;
     }}
     @media (max-width: 900px) {{
-      .hero, .grid, .two {{ grid-template-columns: 1fr; }}
+      .hero, .grid, .two, .chart-shell, .explain-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -198,6 +300,39 @@ def _render_html(payload: dict[str, Any]) -> str:
     </div>
 
     <section class="grid" id="top-cards"></section>
+
+    <section class="panel stack">
+      <div class="toolbar">
+        <div>
+          <h2>SP1 Visual Drilldown</h2>
+          <p>Real vs model by segment, with the variables the baseline is leaning on.</p>
+        </div>
+        <select id="segment-select"></select>
+      </div>
+      <div class="chart-shell">
+        <div>
+          <svg class="viz" id="forecast-chart" viewBox="0 0 720 320" preserveAspectRatio="none"></svg>
+          <div class="legend">
+            <span class="actual">Actual</span>
+            <span class="pred">Predicted</span>
+          </div>
+        </div>
+        <div class="panel" style="padding:14px">
+          <h2 id="explain-title">Prediction Story</h2>
+          <p class="small" id="explain-subtitle"></p>
+          <div class="explain-grid">
+            <div class="explain-card"><div class="small">Actual</div><div class="value" id="story-actual"></div></div>
+            <div class="explain-card"><div class="small">Predicted</div><div class="value" id="story-pred"></div></div>
+            <div class="explain-card"><div class="small">HDD</div><div class="value" id="story-hdd"></div></div>
+            <div class="explain-card"><div class="small">Temp Media</div><div class="value" id="story-temp"></div></div>
+          </div>
+          <div class="explain-card" style="margin-top:10px">
+            <div class="small">Lag Inputs</div>
+            <div class="mono" id="story-lags" style="margin-top:8px"></div>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <section class="two">
       <div class="panel">
@@ -238,6 +373,7 @@ def _render_html(payload: dict[str, Any]) -> str:
 
     const fmtInt = value => new Intl.NumberFormat('en-US').format(value);
     const fmtPct = value => (value * 100).toFixed(2) + '%';
+    const fmtShort = value => new Intl.NumberFormat('en-US', {{ notation: 'compact', maximumFractionDigits: 1 }}).format(value);
 
     document.getElementById('metric-value').textContent = fmtPct(data.forecast.metric_value);
     document.getElementById('metric-label').textContent =
@@ -288,6 +424,80 @@ def _render_html(payload: dict[str, Any]) -> str:
         row.innerHTML = `<td>${{item.timestamp}}</td><td>${{item.hypothesis}}</td><td>${{item.metric_value}}</td><td>${{item.delta_vs_prev}}</td><td>${{item.kept}}</td>`;
         resultsNode.appendChild(row);
       }});
+    }}
+
+    const segmentSelect = document.getElementById('segment-select');
+    const chart = document.getElementById('forecast-chart');
+
+    data.forecast.chart_segments.forEach((item, idx) => {{
+      const option = document.createElement('option');
+      option.value = item.segmento;
+      option.textContent = item.segmento;
+      if (idx === 0) option.selected = true;
+      segmentSelect.appendChild(option);
+    }});
+
+    const linePath = (points, xMap, yMap) => points.map((p, idx) =>
+      `${{idx === 0 ? 'M' : 'L'}} ${{xMap(idx)}} ${{yMap(p)}}`
+    ).join(' ');
+
+    function renderStory(point) {{
+      document.getElementById('explain-title').textContent = `${{point.segmento}} | ${{point.fecha}}`;
+      document.getElementById('explain-subtitle').textContent = `APE: ${{fmtPct(point.ape)}}`;
+      document.getElementById('story-actual').textContent = fmtShort(point.actual_volume);
+      document.getElementById('story-pred').textContent = fmtShort(point.predicted_volume);
+      document.getElementById('story-hdd').textContent = point.hdd == null ? '-' : point.hdd;
+      document.getElementById('story-temp').textContent = point.temp_media == null ? '-' : point.temp_media + ' C';
+      document.getElementById('story-lags').textContent = Object.entries(point.lag_values)
+        .map(([key, value]) => `${{key}}: ${{fmtShort(value)}}`)
+        .join(' | ');
+    }}
+
+    function renderChart(segment) {{
+      const segmentData = data.forecast.chart_segments.find(item => item.segmento === segment);
+      if (!segmentData) return;
+      const points = segmentData.points;
+      const maxY = Math.max(...points.flatMap(p => [p.actual_volume, p.predicted_volume])) * 1.1;
+      const left = 52, top = 20, width = 630, height = 240, bottom = top + height;
+      const xMap = idx => left + (points.length === 1 ? width / 2 : (idx * width) / (points.length - 1));
+      const yMap = value => bottom - (value / maxY) * height;
+
+      const grid = [0, 0.25, 0.5, 0.75, 1].map(tick => {{
+        const y = top + height * tick;
+        const value = maxY * (1 - tick);
+        return `
+          <line x1="${{left}}" y1="${{y}}" x2="${{left + width}}" y2="${{y}}" stroke="rgba(106,114,128,0.16)" />
+          <text x="8" y="${{y + 4}}" fill="#6a7280" font-size="11">${{fmtShort(value)}}</text>
+        `;
+      }}).join('');
+
+      const xLabels = points.map((point, idx) => `
+        <text x="${{xMap(idx)}}" y="${{bottom + 24}}" text-anchor="middle" fill="#6a7280" font-size="11">${{point.fecha.slice(0, 7)}}</text>
+      `).join('');
+
+      const actualPath = linePath(points.map(p => p.actual_volume), xMap, yMap);
+      const predPath = linePath(points.map(p => p.predicted_volume), xMap, yMap);
+
+      const dots = points.map((point, idx) => `
+        <circle cx="${{xMap(idx)}}" cy="${{yMap(point.actual_volume)}}" r="5" fill="var(--accent)" />
+        <circle cx="${{xMap(idx)}}" cy="${{yMap(point.predicted_volume)}}" r="5" fill="var(--accent-2)" />
+      `).join('');
+
+      chart.innerHTML = `
+        <rect x="0" y="0" width="720" height="320" rx="12" fill="transparent" />
+        ${{grid}}
+        <path d="${{actualPath}}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" />
+        <path d="${{predPath}}" fill="none" stroke="var(--accent-2)" stroke-width="3" stroke-linecap="round" />
+        ${{dots}}
+        ${{xLabels}}
+      `;
+
+      renderStory(points[points.length - 1]);
+    }}
+
+    segmentSelect.addEventListener('change', event => renderChart(event.target.value));
+    if (data.forecast.chart_segments.length > 0) {{
+      renderChart(data.forecast.chart_segments[0].segmento);
     }}
   </script>
 </body>
