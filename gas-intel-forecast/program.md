@@ -31,6 +31,7 @@ Establish baseline before any modifications.
 11. Trend decomposition: add STL decomposition residuals as features.
 12. Add INDEC activity index as industrial demand proxy.
 13. Holiday proximity features (days before/after feriado).
+14. Add transport congestion features from `transporte_utilizacion_mensual` to separate latent demand from deliverable demand in winter.
 
 ## Constraints — NEVER violate
 - No data leakage: features must only use data available at prediction time
@@ -38,6 +39,7 @@ Establish baseline before any modifications.
 - Budget: 3 minutes max per experiment
 - Model must be interpretable (no black-box neural nets)
 - Validate on held-out last 3 months only
+- Distinguish demand from deliverability: congestion may cap served volume even when latent demand is higher
 
 ## Expected progress
 Baseline MAPE: TBD (establish first)

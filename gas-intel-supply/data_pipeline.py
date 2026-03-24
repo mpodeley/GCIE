@@ -10,7 +10,12 @@ from typing import Any
 
 ENGINE_NAME = "gas-intel-supply"
 DUCKDB_PATH = Path(__file__).resolve().parents[1] / "gas-intel-datalake" / "duckdb" / "gas_intel.duckdb"
-REQUIRED_TABLES = ("precios_boca_pozo", "pozos_no_convencional", "tipo_cambio")
+REQUIRED_TABLES = (
+    "precios_boca_pozo",
+    "pozos_no_convencional",
+    "tipo_cambio",
+    "transporte_utilizacion_mensual",
+)
 TARGET_BASIN_MAP = {
     "Austral Santa Cruz": "AUSTRAL",
     "Austral Tierra del Fuego": "AUSTRAL",
@@ -18,6 +23,25 @@ TARGET_BASIN_MAP = {
     "Noroeste": "NOROESTE",
     "Golfo de San Jorge": "SAN_JORGE",
     "Total Cuenca": "TOTAL",
+}
+BASIN_TRANSPORT_MAP = {
+    "NEUQUINA": {
+        ("TGS", "Neuba I+II"),
+        ("TGN", "Centro Oeste"),
+        ("Distribuidoras", "Malargüe (1)"),
+    },
+    "AUSTRAL": {
+        ("TGS", "Gral. San Martin"),
+        ("TGS", "San Martín"),
+        ("Distribuidoras", "Sur (2)"),
+    },
+    "NOROESTE": {
+        ("TGN", "Norte"),
+    },
+    "SAN_JORGE": {
+        ("TGS", "San Martín"),
+        ("Distribuidoras", "Sur (2)"),
+    },
 }
 LAG_PERIODS = (1, 3, 6)
 
@@ -129,16 +153,80 @@ def _fetch_fx_by_month(conn: Any) -> dict[date, float]:
     return {row[0]: float(row[1]) for row in rows if row[1] is not None}
 
 
+def _fetch_transport_features(conn: Any) -> dict[tuple[date, str], dict[str, float | bool | None]]:
+    rows = conn.execute(
+        """
+        SELECT
+            CAST(fecha AS DATE) AS fecha,
+            transportista,
+            gasoducto,
+            utilization_ratio_proxy,
+            headroom_proxy_m3,
+            congestion_flag_proxy
+        FROM transporte_utilizacion_mensual
+        """
+    ).fetchall()
+
+    by_month: dict[date, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_month[row[0]].append(
+            {
+                "transportista": row[1],
+                "gasoducto": row[2],
+                "utilization_ratio_proxy": None if row[3] is None else float(row[3]),
+                "headroom_proxy_m3": None if row[4] is None else float(row[4]),
+                "congestion_flag_proxy": bool(row[5]) if row[5] is not None else False,
+            }
+        )
+
+    result: dict[tuple[date, str], dict[str, float | bool | None]] = {}
+    for month, month_rows in by_month.items():
+        for basin_group in {"TOTAL", *BASIN_TRANSPORT_MAP}:
+            if basin_group == "TOTAL":
+                relevant_rows = month_rows
+            else:
+                corridors = BASIN_TRANSPORT_MAP[basin_group]
+                relevant_rows = [
+                    row
+                    for row in month_rows
+                    if (row["transportista"], row["gasoducto"]) in corridors
+                ]
+
+            utilization_values = [
+                float(row["utilization_ratio_proxy"])
+                for row in relevant_rows
+                if row["utilization_ratio_proxy"] is not None
+            ]
+            headroom_values = [
+                float(row["headroom_proxy_m3"])
+                for row in relevant_rows
+                if row["headroom_proxy_m3"] is not None
+            ]
+            result[(month, basin_group)] = {
+                "transport_util_mean": (
+                    sum(utilization_values) / len(utilization_values) if utilization_values else None
+                ),
+                "transport_util_max": max(utilization_values) if utilization_values else None,
+                "transport_headroom_min_m3": min(headroom_values) if headroom_values else None,
+                "winter_congestion_flag": any(
+                    bool(row["congestion_flag_proxy"]) for row in relevant_rows
+                ),
+            }
+    return result
+
+
 def _build_base_rows(conn: Any) -> list[dict[str, Any]]:
     target_rows = _fetch_target_rows(conn)
     no_conv_features = _fetch_no_conv_features(conn)
     fx_by_month = _fetch_fx_by_month(conn)
+    transport_features = _fetch_transport_features(conn)
 
     base_rows: list[dict[str, Any]] = []
     for row in target_rows:
         row_date = row["fecha"]
         basin_group = row["basin_group"]
         no_conv = no_conv_features.get((row_date, basin_group), {})
+        transport = transport_features.get((row_date, basin_group), {})
 
         base_rows.append(
             {
@@ -153,6 +241,10 @@ def _build_base_rows(conn: Any) -> list[dict[str, Any]]:
                 "oil_convencional_m3": no_conv.get("oil_convencional_m3"),
                 "gas_no_conv_share": no_conv.get("gas_no_conv_share"),
                 "oil_no_conv_share": no_conv.get("oil_no_conv_share"),
+                "transport_util_mean": transport.get("transport_util_mean"),
+                "transport_util_max": transport.get("transport_util_max"),
+                "transport_headroom_min_m3": transport.get("transport_headroom_min_m3"),
+                "winter_congestion_flag": bool(transport.get("winter_congestion_flag", False)),
                 "month": row_date.month,
                 "quarter": ((row_date.month - 1) // 3) + 1,
             }
@@ -218,6 +310,10 @@ def load_dataset() -> dict[str, Any]:
             "oil_no_convencional_m3",
             "gas_no_conv_share",
             "oil_no_conv_share",
+            "transport_util_mean",
+            "transport_util_max",
+            "transport_headroom_min_m3",
+            "winter_congestion_flag",
             "month",
             "quarter",
         ],

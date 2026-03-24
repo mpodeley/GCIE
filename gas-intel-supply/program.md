@@ -5,40 +5,40 @@ Minimize MAE of weighted average acquisition price ($/MMBtu) on 12-month backtes
 MAE = mean(|actual_acquisition_price - predicted_acquisition_price|)
 Lower is better.
 
-## KEY CONTEXT
+## Key context
 Vaca Muerta shale oil is scaling (Bajada del Palo Oeste, La Amarga Chica, Rincón de Aranda).
-Associated gas enters at near-zero marginal cost. The gas_asociado_ratio table captures this.
-The ratio GOR (m3 gas / m3 oil) by basin and its trend is the strongest predictor of downward price pressure.
+Associated gas enters at near-zero marginal cost and should pressure prices down when oil ramps.
+But that is only half of the market: once gas is priced at PIST, transport constraints determine whether low-cost gas can actually reach the demand center. Winter saturation on TGN/TGS corridors can widen basin spreads and raise effective acquisition cost.
 
-## Baseline
-LightGBM predicting monthly average acquisition price with:
-- total_gas_production_by_basin
-- gas_asociado_libre_ratio (KEY FEATURE from gas_asociado_ratio table)
-- se_reference_price
-- month, quarter (seasonality)
-- vm_petroleum_production_lag1 (leading indicator of future gas asociado)
-- injection_vs_capacity_ratio (congestion proxy)
-- megsa_price_lag1 (historical spot reference)
+## Current baseline
+Implemented monthly deterministic baseline by cuenca with:
+- price lags (1/3/6)
+- month and quarter seasonality
+- unconventional gas/oil output and shares from `pozos_no_convencional`
+- FX level from `tipo_cambio`
+
+Current realized baseline MAE on the latest 12-month backtest: about `0.30 USD/MMBtu`.
+Transport congestion is now available in the data lake and already part of the next iteration plan, but the first direct inclusion attempt did not beat the kept baseline.
 
 ## Research agenda
 
 ### Phase A — Core supply model
-1. Establish baseline with above features. Document baseline MAE.
-2. Add vm_petroleum_production_lag3 and lag6 (longer leading indicators).
-3. Add GOR trend (3-month rolling slope of gas_asociado_ratio) as feature.
-4. Split by basin (Neuquina, Austral, Noroeste) and train basin-specific models.
+1. Improve the current baseline with richer corridor-specific transport utilization and headroom features.
+2. Restore historical `gas_asociado_ratio` by cuenca from F01 and add GOR trend (3-month rolling slope).
+3. Add vm petroleum production lag3 and lag6 once `produccion_diaria` recovers basin fidelity.
+4. Compare unified vs. basin-specific models for Neuquina, Austral, Noroeste and South corridor basins.
 
 ### Phase B — Supply curve modeling
 5. Model explicit aggregate supply curve:
    - free gas portion at reference price X
    - asociado gas portion at processing_cost only (~0.5 USD/MMBtu)
-   - Find equilibrium clearing price given demand volume
-6. Incorporate production capacity constraints by basin.
+   - Find equilibrium clearing price given demand volume and corridor headroom
+6. Incorporate production capacity constraints by basin and transport constraints by gasoducto.
 
 ### Phase C — Opportunity windows
 7. Build opportunity window detector:
    - Identify months where spot < firm contract cost
-   - Features: inventory proxy, demand seasonality, production ramp-up rate
+   - Features: inventory proxy, demand seasonality, production ramp-up rate, transport slack
    - Binary classifier: is this an opportunity window?
 
 ### Phase D — Contract mix optimization
@@ -48,9 +48,10 @@ LightGBM predicting monthly average acquisition price with:
 
 ## Constraints
 - No look-ahead on petroleum production data
+- No look-ahead on transport congestion; only use published or lagged monthly operational data
 - Budget: 3 minutes max
 - All prices must be in USD/MMBtu (use tipo_cambio table for AR$ conversion)
 
 ## Expected progress
-Baseline MAE: TBD
+Baseline MAE: ~0.30 USD/MMBtu
 Target MAE: <10% of average acquisition price

@@ -29,7 +29,7 @@ Monte Carlo simulation with independent calibrated distributions:
 ### Phase C — Stress scenarios
 7. Scenario: WTI drops to $50 → less petroleum production → less gas asociado → higher acquisition price.
    Quantify impact on annual P&L.
-8. Scenario: TGS/TGN maintenance (pipeline cut) during winter peak. Probability + severity.
+8. Scenario: TGS/TGN maintenance (pipeline cut) during winter peak. Probability + severity calibrated from `transporte_utilizacion_mensual`.
 9. Scenario: Plan Gas.Ar suspension/modification → loss of incentive prices.
 10. Scenario: Extreme cold snap (July 2007 repeat) — what is cost of meeting demand?
 

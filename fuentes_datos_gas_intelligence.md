@@ -1,6 +1,6 @@
 # Gas Commercializer Intelligence Engine — Catálogo de Fuentes de Datos
 
-**Versión:** 1.0 — Marzo 2026  
+**Versión:** 1.1 — Marzo 2026  
 **Objetivo:** Inventario exhaustivo de fuentes concretas, URLs, formatos y estrategia de scraping para el Data Lake (SP0).
 
 ---
@@ -9,7 +9,7 @@
 
 | Tier | Definición | Cantidad de fuentes | Estrategia |
 |------|-----------|---------------------|-----------|
-| 1 — Automatizable | API o CSV descargable con URL estable | 7 | Script Python + cron diario/semanal |
+| 1 — Automatizable | API, XLSX o CSV descargable con URL estable | 8 | Script Python + cron diario/semanal |
 | 2 — Semi-automático | Portal web sin API, pero con exports descargables | 5 | Descarga manual periódica + script de normalización |
 | 3 — Manual | PDFs, informes no estructurados, datos hipotéticos | 4 | Template Excel + validación de schema al importar |
 
@@ -229,12 +229,27 @@ Headers: token: {tu_token}
 | **Organismo** | ENARGAS |
 | **Dataset** | Transporte — Capacidad contratada en firme por cargador |
 | **URL** | `http://datos.energia.gob.ar/dataset/transporte` |
-| **Formato** | CSV |
-| **Granularidad** | Por cargador / tramo |
+| **Formato** | XLSX |
+| **Granularidad** | Mensual / transportista / cargador |
 | **Campos clave** | Cargador, tramo, gasoducto, capacidad firme contratada |
 | **Tabla destino en DL** | `capacidad_transporte` |
 | **Valor para el proyecto** | Esencial para Pricing Engine (costo de transporte) y Risk Engine (riesgo de capacidad). |
-| **Estrategia de scraping** | CSV directo. Complementar con datos manuales de TGS/TGN para capacidad total vs. contratada. |
+| **Estrategia de scraping** | Workbook oficial `Contratos.xlsx`. Parsear encabezados multinivel por transportista, categoría y cargador. Complementar con datos manuales de TGS/TGN para capacidad física nominal por tramo. |
+
+---
+
+### F19. Transporte y Congestión Operativa (ENARGAS)
+
+| Campo | Detalle |
+|-------|---------|
+| **Organismo** | ENARGAS |
+| **Datasets** | Gas Recibido (`GRT.xlsx`), Gas Cargado (`GCD.xlsx`), Contratos de Transporte (`Contratos.xlsx`) |
+| **Formato** | XLSX |
+| **Granularidad** | Mensual / gasoducto / transportista |
+| **Campos clave** | Gasoducto, transportista, flujo recibido, flujo cargado, utilización proxy, capacidad firme agregada |
+| **Tabla destino en DL** | `transporte_flujo_mensual`, `transporte_capacidad_firme`, `transporte_utilizacion_mensual` |
+| **Valor para el proyecto** | **CRÍTICO.** Permite modelar congestión, slack operativo y riesgo de deliverability, especialmente en invierno. |
+| **Estrategia de scraping** | Descargar `GRT.xlsx`, `GCD.xlsx` y `Contratos.xlsx` desde ENARGAS. Normalizar a tablas mensuales. Para tramo físico nominal, complementar luego con TGS/TGN o fuentes manuales; mientras tanto, usar proxy de utilización basado en pico histórico observado por gasoducto. |
 
 ---
 
