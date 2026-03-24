@@ -24,6 +24,7 @@ TABLE_SOURCES = {
     "tipo_cambio": "tipo_cambio.parquet",
 }
 OPTIONAL_TABLE_SOURCES = {
+    "pozos_no_convencional": "pozos_no_convencional.parquet",
     "precios_boca_pozo": "precios_boca_pozo.parquet",
 }
 
