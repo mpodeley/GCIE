@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,16 @@ EDGES_PATH = PROCESSED_DIR / "red_tramos.parquet"
 ALIASES_PATH = PROCESSED_DIR / "red_tramo_alias.parquet"
 NODE_OVERRIDE_PATH = TEMPLATES_DIR / "red_nodos_override.csv"
 EDGE_OVERRIDE_PATH = TEMPLATES_DIR / "red_tramos_override.csv"
+MERCATOR_RADIUS = 6378137.0
+
+
+def _project_mercator(lon: float, lat: float) -> tuple[float, float]:
+    clamped_lat = max(-85.05112878, min(85.05112878, lat))
+    lambda_value = math.radians(lon)
+    phi_value = math.radians(clamped_lat)
+    x = MERCATOR_RADIUS * lambda_value
+    y = MERCATOR_RADIUS * math.log(math.tan(math.pi / 4 + phi_value / 2))
+    return x, y
 
 
 def _save_snapshot(df: pd.DataFrame, table_name: str) -> Path:
@@ -72,6 +83,10 @@ def _normalize_text(value: Any) -> str | None:
 
 def _apply_node_overrides(nodes_df: pd.DataFrame, overrides_df: pd.DataFrame) -> pd.DataFrame:
     canonical = nodes_df.copy()
+    if "x_mercator" not in canonical.columns:
+        canonical["x_mercator"] = pd.NA
+    if "y_mercator" not in canonical.columns:
+        canonical["y_mercator"] = pd.NA
     canonical["canonical_name"] = canonical["nombre"]
     canonical["notes"] = pd.NA
     canonical["source_confidence"] = "powerbi_route"
@@ -139,7 +154,20 @@ def _apply_node_overrides(nodes_df: pd.DataFrame, overrides_df: pd.DataFrame) ->
             value = row[column]
             if pd.notna(value):
                 canonical.loc[mask, target] = value
+        updated_lat = canonical.loc[mask, "latitud"].iloc[0]
+        updated_lon = canonical.loc[mask, "longitud"].iloc[0]
+        if pd.notna(updated_lat) and pd.notna(updated_lon):
+            x_mercator, y_mercator = _project_mercator(float(updated_lon), float(updated_lat))
+            canonical.loc[mask, "x_mercator"] = x_mercator
+            canonical.loc[mask, "y_mercator"] = y_mercator
         canonical.loc[mask, "source"] = "manual_override"
+    valid_coords = canonical["latitud"].notna() & canonical["longitud"].notna()
+    mercator = canonical.loc[valid_coords, ["longitud", "latitud"]].apply(
+        lambda row: _project_mercator(float(row["longitud"]), float(row["latitud"])),
+        axis=1,
+    )
+    canonical.loc[valid_coords, "x_mercator"] = mercator.apply(lambda item: item[0])
+    canonical.loc[valid_coords, "y_mercator"] = mercator.apply(lambda item: item[1])
     return canonical
 
 

@@ -1,0 +1,3 @@
+asset_id,nombre,edge_id,gasoducto,length_km,diameter_m,capacity_mm3_dia_incremental,estado,source_confidence,topology_status,notes
+loop_neuba_mercedes,Loop NEUBA II Mercedes,a75b56490047c4c0,Mercedes-Cardales,29.0,0.9144,4.0,active,official_project_data,confirmed_project_asset,"Parallel loop associated with Mercedes-Cardales / NEUBA reinforcement mentioned in Energia Argentina project documents."
+loop_perito_expansion,Loop ampliacion Perito Moreno,manual_edge_perito_moreno,Perito Moreno,20.0,0.9144,6.0,planned,tgs_project_update,planned_project_asset,"Additional parallel pipe announced by tgs for Perito Moreno expansion. Kept as planned asset until operational evidence is loaded."

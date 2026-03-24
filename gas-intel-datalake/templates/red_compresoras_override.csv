@@ -1,0 +1,8 @@
+asset_id,nombre,node_id,gasoducto,potencia_hp,estado,source_confidence,topology_status,notes
+comp_tratayen,Planta Compresora Tratayen,manual_node_tratayen,Perito Moreno,15000,active,official_project_data,confirmed_project_asset,"Official compressor at the Tratayen head of Perito Moreno used to increase deliverability from Vaca Muerta."
+comp_salliquelo,Planta Compresora Salliquelo,manual_node_salliquelo,Perito Moreno,15000,active,official_project_data,confirmed_project_asset,"Official compressor at Salliquelo for the first Perito Moreno stage."
+comp_mercedes,Planta Compresora Mercedes,node_0045,Mercedes-Cardales,15000,active,official_project_data,confirmed_project_asset,"Official compressor linked to Mercedes-Cardales interconnection and downstream transfer to TGN."
+comp_ferreyra,Planta Compresora Ferreyra,node_0021,Norte,6120,active,official_project_data,confirmed_project_asset,"Installed power published for Reversion del Norte complementary works."
+comp_dean_funes,Planta Compresora Dean Funes,node_0019,Norte,17700,active,official_project_data,confirmed_project_asset,"Installed power published for Reversion del Norte complementary works."
+comp_lavalle,Planta Compresora Lavalle,node_0038,Norte,17945,active,official_project_data,confirmed_project_asset,"Installed power published for Reversion del Norte complementary works."
+comp_lumbreras,Planta Compresora Lumbreras,node_0042,Norte,20555,active,official_project_data,confirmed_project_asset,"Installed power published for Reversion del Norte complementary works."
