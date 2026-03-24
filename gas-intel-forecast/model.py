@@ -32,11 +32,9 @@ def _compute_segment_profiles(train_rows: list[dict[str, Any]]) -> dict[str, dic
 
 
 def _predict_row(row: dict[str, Any], profile: dict[str, Any]) -> float:
-    lag_signal = (
-        0.55 * float(row["lag_7"])
-        + 0.30 * float(row["lag_14"])
-        + 0.15 * float(row["lag_28"])
-    )
+    lag_keys = row["lag_keys"]
+    lag_weights = [0.55, 0.30, 0.15][: len(lag_keys)]
+    lag_signal = sum(weight * float(row[key]) for weight, key in zip(lag_weights, lag_keys))
     segment_mean = float(profile["segment_mean"])
     dow_mean = float(profile["dow_mean"].get(row["day_of_week"], segment_mean))
     month_mean = float(profile["month_mean"].get(row["month"], segment_mean))
@@ -56,7 +54,9 @@ def train_and_predict(dataset: dict[str, Any]) -> dict[str, Any]:
         profile = profiles.get(row["segmento"])
         if profile is None:
             raise RuntimeError(f"Missing training profile for segment {row['segmento']!r}.")
-        prediction = _predict_row(row, profile)
+        row_with_lags = dict(row)
+        row_with_lags["lag_keys"] = dataset["lag_keys"]
+        prediction = _predict_row(row_with_lags, profile)
         predictions.append(
             {
                 "fecha": row["fecha"],
@@ -70,6 +70,8 @@ def train_and_predict(dataset: dict[str, Any]) -> dict[str, Any]:
         "hypothesis": "Lag-weighted baseline with segment/day/month priors",
         "predictions": predictions,
         "model_artifacts": {
+            "cadence": dataset["cadence"],
+            "lag_keys": dataset["lag_keys"],
             "segments": sorted(profiles),
             "training_rows": len(train_rows),
             "validation_rows": len(validation_rows),

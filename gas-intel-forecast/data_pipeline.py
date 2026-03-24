@@ -11,7 +11,8 @@ from typing import Any
 ENGINE_NAME = "gas-intel-forecast"
 DUCKDB_PATH = Path(__file__).resolve().parents[1] / "gas-intel-datalake" / "duckdb" / "gas_intel.duckdb"
 REQUIRED_TABLES = ("consumo_diario", "clima", "calendario")
-LAG_DAYS = (7, 14, 28)
+DAILY_LAGS = (7, 14, 28)
+MONTHLY_LAGS = (1, 2, 3)
 
 
 def _import_duckdb() -> Any:
@@ -41,84 +42,178 @@ def _ensure_tables_exist(conn: Any) -> None:
         raise RuntimeError(f"Missing required DuckDB tables for SP1: {', '.join(missing_tables)}")
 
 
-def _fetch_base_rows(conn: Any) -> list[dict[str, Any]]:
+def _fetch_demand_rows(conn: Any) -> list[dict[str, Any]]:
     query = """
-        WITH demand AS (
-            SELECT
-                CAST(fecha AS DATE) AS fecha,
-                segmento,
-                SUM(volumen_m3) AS actual_volume
-            FROM consumo_diario
-            GROUP BY 1, 2
-        ),
-        weather AS (
-            SELECT
-                CAST(fecha AS DATE) AS fecha,
-                AVG(temp_media) AS temp_media,
-                AVG(hdd) AS hdd,
-                AVG(cdd) AS cdd
-            FROM clima
-            GROUP BY 1
-        )
         SELECT
-            demand.fecha,
-            demand.segmento,
-            demand.actual_volume,
-            weather.temp_media,
-            weather.hdd,
-            weather.cdd,
-            calendario.es_feriado,
-            calendario.es_laborable,
-            calendario.mes,
-            calendario.trimestre,
-            calendario.estacion
-        FROM demand
-        LEFT JOIN weather ON weather.fecha = demand.fecha
-        LEFT JOIN calendario ON calendario.fecha = demand.fecha
-        ORDER BY demand.fecha, demand.segmento
+            CAST(fecha AS DATE) AS fecha,
+            segmento,
+            SUM(volumen_m3) AS actual_volume
+        FROM consumo_diario
+        GROUP BY 1, 2
+        ORDER BY 1, 2
     """
     rows = conn.execute(query).fetchall()
     if not rows:
-        raise RuntimeError("SP1 query returned no rows from the data lake.")
+        raise RuntimeError("SP1 query returned no rows from consumo_diario.")
 
-    base_rows: list[dict[str, Any]] = []
+    demand_rows = []
     for row in rows:
         fecha = row[0]
         if not isinstance(fecha, date):
             raise RuntimeError("SP1 expected DATE values from DuckDB.")
-        base_rows.append(
+        demand_rows.append(
             {
                 "fecha": fecha,
                 "segmento": row[1],
                 "actual_volume": float(row[2]),
-                "temp_media": None if row[3] is None else float(row[3]),
-                "hdd": None if row[4] is None else float(row[4]),
-                "cdd": None if row[5] is None else float(row[5]),
-                "es_feriado": bool(row[6]) if row[6] is not None else False,
-                "es_laborable": bool(row[7]) if row[7] is not None else False,
-                "month": int(row[8]) if row[8] is not None else fecha.month,
-                "quarter": int(row[9]) if row[9] is not None else ((fecha.month - 1) // 3) + 1,
-                "estacion": row[10] if row[10] is not None else "unknown",
+            }
+        )
+    return demand_rows
+
+
+def _fetch_weather_by_date(conn: Any) -> dict[date, dict[str, float | None]]:
+    rows = conn.execute(
+        """
+        SELECT
+            CAST(fecha AS DATE) AS fecha,
+            AVG(temp_media) AS temp_media,
+            AVG(hdd) AS hdd,
+            AVG(cdd) AS cdd
+        FROM clima
+        GROUP BY 1
+        """
+    ).fetchall()
+    weather = {}
+    for row in rows:
+        weather[row[0]] = {
+            "temp_media": None if row[1] is None else float(row[1]),
+            "hdd": None if row[2] is None else float(row[2]),
+            "cdd": None if row[3] is None else float(row[3]),
+        }
+    return weather
+
+
+def _fetch_calendar_by_date(conn: Any) -> dict[date, dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT
+            CAST(fecha AS DATE) AS fecha,
+            es_feriado,
+            es_laborable,
+            mes,
+            trimestre,
+            estacion
+        FROM calendario
+        """
+    ).fetchall()
+    calendar = {}
+    for row in rows:
+        calendar[row[0]] = {
+            "es_feriado": bool(row[1]) if row[1] is not None else False,
+            "es_laborable": bool(row[2]) if row[2] is not None else False,
+            "month": int(row[3]) if row[3] is not None else row[0].month,
+            "quarter": int(row[4]) if row[4] is not None else ((row[0].month - 1) // 3) + 1,
+            "estacion": row[5] if row[5] is not None else "unknown",
+        }
+    return calendar
+
+
+def _is_monthly_cadence(demand_rows: list[dict[str, Any]]) -> bool:
+    unique_dates = sorted({row["fecha"] for row in demand_rows})
+    if len(unique_dates) < 2:
+        return False
+    if any(d.day != 1 for d in unique_dates):
+        return False
+    return True
+
+
+def _aggregate_weather_monthly(weather_by_date: dict[date, dict[str, float | None]]) -> dict[tuple[int, int], dict[str, float | None]]:
+    buckets: dict[tuple[int, int], dict[str, list[float]]] = defaultdict(
+        lambda: {"temp_media": [], "hdd": [], "cdd": []}
+    )
+    for weather_date, metrics in weather_by_date.items():
+        key = (weather_date.year, weather_date.month)
+        for field in ("temp_media", "hdd", "cdd"):
+            value = metrics[field]
+            if value is not None:
+                buckets[key][field].append(value)
+
+    result = {}
+    for key, metrics in buckets.items():
+        result[key] = {
+            field: (sum(values) / len(values) if values else None)
+            for field, values in metrics.items()
+        }
+    return result
+
+
+def _fetch_base_rows(conn: Any) -> tuple[list[dict[str, Any]], str, tuple[int, ...]]:
+    demand_rows = _fetch_demand_rows(conn)
+    weather_by_date = _fetch_weather_by_date(conn)
+    calendar_by_date = _fetch_calendar_by_date(conn)
+
+    cadence = "monthly" if _is_monthly_cadence(demand_rows) else "daily"
+    lag_periods = MONTHLY_LAGS if cadence == "monthly" else DAILY_LAGS
+    weather_by_month = _aggregate_weather_monthly(weather_by_date) if cadence == "monthly" else {}
+
+    base_rows: list[dict[str, Any]] = []
+    for row in demand_rows:
+        fecha = row["fecha"]
+        if cadence == "monthly":
+            weather = weather_by_month.get((fecha.year, fecha.month), {})
+            calendar = {
+                "es_feriado": False,
+                "es_laborable": True,
+                "month": fecha.month,
+                "quarter": ((fecha.month - 1) // 3) + 1,
+                "estacion": calendar_by_date.get(fecha, {}).get("estacion", "unknown"),
+            }
+        else:
+            weather = weather_by_date.get(fecha, {})
+            calendar = calendar_by_date.get(
+                fecha,
+                {
+                    "es_feriado": False,
+                    "es_laborable": False,
+                    "month": fecha.month,
+                    "quarter": ((fecha.month - 1) // 3) + 1,
+                    "estacion": "unknown",
+                },
+            )
+
+        base_rows.append(
+            {
+                "fecha": fecha,
+                "segmento": row["segmento"],
+                "actual_volume": row["actual_volume"],
+                "temp_media": weather.get("temp_media"),
+                "hdd": weather.get("hdd"),
+                "cdd": weather.get("cdd"),
+                "es_feriado": calendar["es_feriado"],
+                "es_laborable": calendar["es_laborable"],
+                "month": calendar["month"],
+                "quarter": calendar["quarter"],
+                "estacion": calendar["estacion"],
                 "day_of_week": fecha.weekday(),
             }
         )
-    return base_rows
+    return base_rows, cadence, lag_periods
 
 
-def _add_lag_features(base_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _add_lag_features(base_rows: list[dict[str, Any]], lag_periods: tuple[int, ...]) -> list[dict[str, Any]]:
     per_segment_history: dict[str, list[float]] = defaultdict(list)
     enriched_rows: list[dict[str, Any]] = []
 
     for row in base_rows:
         history = per_segment_history[row["segmento"]]
         enriched = dict(row)
-        for lag in LAG_DAYS:
+        for lag in lag_periods:
             enriched[f"lag_{lag}"] = history[-lag] if len(history) >= lag else None
         history.append(row["actual_volume"])
         enriched_rows.append(enriched)
 
     filtered_rows = [
-        row for row in enriched_rows if all(row[f"lag_{lag}"] is not None for lag in LAG_DAYS)
+        row for row in enriched_rows if all(row[f"lag_{lag}"] is not None for lag in lag_periods)
     ]
     if not filtered_rows:
         raise RuntimeError("SP1 could not build lag features; not enough historical depth.")
@@ -146,19 +241,19 @@ def load_dataset() -> dict[str, Any]:
     conn = duckdb.connect(str(DUCKDB_PATH), read_only=True)
     try:
         _ensure_tables_exist(conn)
-        base_rows = _fetch_base_rows(conn)
+        base_rows, cadence, lag_periods = _fetch_base_rows(conn)
     finally:
         conn.close()
 
-    feature_rows = _add_lag_features(base_rows)
+    feature_rows = _add_lag_features(base_rows, lag_periods)
     train_rows, validation_rows = _split_train_validation(feature_rows)
     return {
         "engine": ENGINE_NAME,
+        "cadence": cadence,
         "duckdb_path": str(DUCKDB_PATH),
+        "lag_keys": [f"lag_{lag}" for lag in lag_periods],
         "features": [
-            "lag_7",
-            "lag_14",
-            "lag_28",
+            *[f"lag_{lag}" for lag in lag_periods],
             "temp_media",
             "hdd",
             "cdd",
