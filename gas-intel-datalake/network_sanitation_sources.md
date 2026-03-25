@@ -3,7 +3,9 @@
 ## Current state
 - `F25` is now implemented in `scrapers/f25_gasoductos_enargas.py`.
 - It materializes the official ENARGAS GIS layer into `red_gasoductos_enargas_oficial.parquet`.
-- It also emits `red_gasoductos_enargas_vs_modelada.parquet` as a first exact-name diagnostic against `red_tramos_canonica` or `red_tramos`.
+- It also emits `red_gasoductos_enargas_vs_modelada.parquet` as a first crosswalk / diagnostic against `red_tramos_canonica` or `red_tramos`.
+- Manual resolution now lives in `templates/red_tramos_enargas_crosswalk.csv`.
+- `F24` already consumes that crosswalk so official ENARGAS lengths can flow into `red_tramos_parametros_canonica` when a tramo is resolved.
 
 ## Backlog candidates
 

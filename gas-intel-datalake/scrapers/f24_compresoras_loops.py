@@ -25,6 +25,7 @@ TEMPLATES_DIR = ROOT_DIR / "templates"
 
 NODES_PATH = PROCESSED_DIR / "red_nodos_canonica.parquet"
 EDGES_PATH = PROCESSED_DIR / "red_tramos_canonica.parquet"
+ENARGAS_CROSSWALK_PATH = PROCESSED_DIR / "red_gasoductos_enargas_vs_modelada.parquet"
 COMPRESSORS_PATH = TEMPLATES_DIR / "red_compresoras_override.csv"
 LOOPS_PATH = TEMPLATES_DIR / "red_loops_override.csv"
 
@@ -49,10 +50,24 @@ def _load_csv(path: Path, columns: list[str]) -> pd.DataFrame:
     return df[columns].fillna(pd.NA)
 
 
-def _load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def _load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     missing = [path.name for path in (NODES_PATH, EDGES_PATH) if not path.exists()]
     if missing:
         raise FileNotFoundError("F24 requires F20b outputs first. Missing: " + ", ".join(missing))
+    crosswalk = pd.DataFrame(
+        columns=[
+            "edge_id",
+            "official_object_ids",
+            "official_tramos",
+            "official_gasoductos",
+            "official_tipos",
+            "official_length_km",
+            "match_strategy",
+            "match_status",
+        ]
+    )
+    if ENARGAS_CROSSWALK_PATH.exists():
+        crosswalk = pd.read_parquet(ENARGAS_CROSSWALK_PATH)
     compressors = _load_csv(
         COMPRESSORS_PATH,
         [
@@ -86,6 +101,7 @@ def _load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFra
     return (
         pd.read_parquet(NODES_PATH),
         pd.read_parquet(EDGES_PATH),
+        crosswalk,
         compressors,
         loops,
     )
@@ -127,7 +143,7 @@ def _build_loops(edges_df: pd.DataFrame, loops_df: pd.DataFrame) -> pd.DataFrame
     return result.sort_values(["gasoducto", "nombre"]).reset_index(drop=True)
 
 
-def _build_edge_parameters(edges_df: pd.DataFrame, loops_df: pd.DataFrame) -> pd.DataFrame:
+def _build_edge_parameters(edges_df: pd.DataFrame, crosswalk_df: pd.DataFrame, loops_df: pd.DataFrame) -> pd.DataFrame:
     active_loops = loops_df[loops_df["estado"].astype(str).str.lower() == "active"].copy()
     loop_summary = (
         active_loops.groupby("edge_id", dropna=False)
@@ -140,7 +156,25 @@ def _build_edge_parameters(edges_df: pd.DataFrame, loops_df: pd.DataFrame) -> pd
         .reset_index()
     )
 
-    result = edges_df.merge(loop_summary, on="edge_id", how="left").fillna(
+    crosswalk_columns = [
+        "edge_id",
+        "official_object_ids",
+        "official_tramos",
+        "official_gasoductos",
+        "official_tipos",
+        "official_length_km",
+        "match_strategy",
+        "match_status",
+    ]
+    available_crosswalk_columns = [
+        column for column in crosswalk_columns if column in crosswalk_df.columns
+    ]
+    result = edges_df.merge(
+        crosswalk_df[available_crosswalk_columns],
+        on="edge_id",
+        how="left",
+    )
+    result = result.merge(loop_summary, on="edge_id", how="left").fillna(
         {
             "active_loop_count": 0,
             "loop_length_km_total": 0.0,
@@ -156,17 +190,20 @@ def _build_edge_parameters(edges_df: pd.DataFrame, loops_df: pd.DataFrame) -> pd
     result["effective_diameter_m"] = pd.to_numeric(result["diameter_m_override"], errors="coerce").fillna(
         pd.to_numeric(result["loop_max_diameter_m"], errors="coerce")
     )
-    result["effective_length_km"] = pd.to_numeric(result["length_km_override"], errors="coerce")
+    result["official_length_km"] = pd.to_numeric(result["official_length_km"], errors="coerce")
+    result["effective_length_km"] = pd.to_numeric(result["length_km_override"], errors="coerce").fillna(
+        result["official_length_km"]
+    )
     result["source"] = "derived_from_red_tramos_canonica_and_f24_assets"
     return result.sort_values(["gasoducto", "ruta"]).reset_index(drop=True)
 
 
 def run() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    nodes_df, edges_df, compressors_df, loops_df = _load_inputs()
+    nodes_df, edges_df, crosswalk_df, compressors_df, loops_df = _load_inputs()
     compressors_out = _build_compressors(nodes_df, compressors_df)
     loops_out = _build_loops(edges_df, loops_df)
-    edge_params_out = _build_edge_parameters(edges_df, loops_out)
+    edge_params_out = _build_edge_parameters(edges_df, crosswalk_df, loops_out)
 
     outputs = {
         "red_compresoras_canonica.parquet": compressors_out,

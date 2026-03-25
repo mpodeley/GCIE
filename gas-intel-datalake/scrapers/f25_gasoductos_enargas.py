@@ -46,6 +46,7 @@ ROOT_DIR = Path(__file__).parent.parent
 RAW_DIR = ROOT_DIR / "data" / "raw" / "enargas"
 PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 SNAPSHOTS_DIR = ROOT_DIR / "data" / "snapshots"
+TEMPLATES_DIR = ROOT_DIR / "templates"
 EXTRACT_DIR = RAW_DIR / "gasoductos_enargas"
 SHP_PATH = EXTRACT_DIR / "Gasoductos" / "Gasoductos_del_Sistema_de_Transporte.shp"
 CSV_PATH = RAW_DIR / "gasoductos_enargas.csv"
@@ -54,6 +55,7 @@ OUTPUT_PATH = PROCESSED_DIR / "red_gasoductos_enargas_oficial.parquet"
 DIAGNOSTIC_PATH = PROCESSED_DIR / "red_gasoductos_enargas_vs_modelada.parquet"
 CANONICAL_MODELED_PATH = PROCESSED_DIR / "red_tramos_canonica.parquet"
 BASE_MODELED_PATH = PROCESSED_DIR / "red_tramos.parquet"
+MANUAL_CROSSWALK_PATH = TEMPLATES_DIR / "red_tramos_enargas_crosswalk.csv"
 EARTH_RADIUS_KM = 6371.0088
 
 
@@ -192,6 +194,22 @@ def _read_official_gis() -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values(["gasoducto", "tramo", "part_index"]).reset_index(drop=True)
 
 
+def _build_official_segments(official_df: pd.DataFrame) -> pd.DataFrame:
+    grouped = (
+        official_df.groupby(
+            ["object_id", "gasoducto", "tramo", "tipo_tramo", "empresa", "tramo_key", "tramo_key_reverse", "gasoducto_key"],
+            dropna=False,
+        )
+        .agg(
+            official_part_count=("part_index", "count"),
+            point_count=("point_count", "sum"),
+            length_km_geodesic=("length_km_geodesic", "sum"),
+        )
+        .reset_index()
+    )
+    return grouped.sort_values(["gasoducto", "tramo", "object_id"]).reset_index(drop=True)
+
+
 def _load_modeled_network() -> tuple[str, pd.DataFrame] | None:
     if CANONICAL_MODELED_PATH.exists():
         return "red_tramos_canonica", pd.read_parquet(CANONICAL_MODELED_PATH)
@@ -210,6 +228,29 @@ def _build_match_lookup(official_df: pd.DataFrame) -> dict[str, list[dict[str, A
     return lookup
 
 
+def _load_manual_crosswalk() -> pd.DataFrame:
+    columns = ["edge_id", "official_object_ids", "notes"]
+    if not MANUAL_CROSSWALK_PATH.exists():
+        return pd.DataFrame(columns=columns)
+    df = pd.read_csv(MANUAL_CROSSWALK_PATH)
+    for column in columns:
+        if column not in df.columns:
+            df[column] = pd.NA
+    return df[columns].fillna(pd.NA)
+
+
+def _parse_object_ids(value: Any) -> list[int]:
+    if value is None or pd.isna(value):
+        return []
+    parsed: list[int] = []
+    for chunk in str(value).replace(",", "|").split("|"):
+        cleaned = chunk.strip()
+        if not cleaned:
+            continue
+        parsed.append(int(cleaned))
+    return parsed
+
+
 def _build_diagnostic(official_df: pd.DataFrame) -> pd.DataFrame:
     modeled_payload = _load_modeled_network()
     if modeled_payload is None:
@@ -217,11 +258,46 @@ def _build_diagnostic(official_df: pd.DataFrame) -> pd.DataFrame:
 
     modeled_source_name, modeled_df = modeled_payload
     lookup = _build_match_lookup(official_df)
+    official_by_id = {int(row["object_id"]): row for row in official_df.to_dict(orient="records")}
+    manual_crosswalk = _load_manual_crosswalk()
+    manual_lookup = {
+        str(row["edge_id"]): _parse_object_ids(row["official_object_ids"])
+        for _, row in manual_crosswalk.iterrows()
+        if str(row["edge_id"]).strip()
+    }
+    manual_notes = {
+        str(row["edge_id"]): None if pd.isna(row["notes"]) else str(row["notes"]).strip()
+        for _, row in manual_crosswalk.iterrows()
+        if str(row["edge_id"]).strip()
+    }
     diagnostic_rows: list[dict[str, Any]] = []
 
     for row in modeled_df.to_dict(orient="records"):
         route_key = _normalize_text(row.get("ruta"))
-        matches = lookup.get(route_key, [])
+        auto_matches = lookup.get(route_key, [])
+        auto_object_ids = sorted({int(match["object_id"]) for match in auto_matches})
+        manual_object_ids = [
+            object_id for object_id in manual_lookup.get(str(row.get("edge_id")), []) if object_id in official_by_id
+        ]
+
+        if manual_object_ids:
+            resolved_object_ids = manual_object_ids
+            match_strategy = "manual"
+            match_status = "resolved_manual"
+        elif len(auto_object_ids) == 1:
+            resolved_object_ids = auto_object_ids
+            match_strategy = "auto_exact_unique"
+            match_status = "resolved_auto"
+        elif len(auto_object_ids) > 1:
+            resolved_object_ids = []
+            match_strategy = "auto_exact_ambiguous"
+            match_status = "needs_manual_resolution"
+        else:
+            resolved_object_ids = []
+            match_strategy = "none"
+            match_status = "unmatched"
+
+        resolved_segments = [official_by_id[object_id] for object_id in resolved_object_ids]
         diagnostic_rows.append(
             {
                 "modeled_source_table": modeled_source_name,
@@ -231,12 +307,22 @@ def _build_diagnostic(official_df: pd.DataFrame) -> pd.DataFrame:
                 "origen": row.get("origen"),
                 "destino": row.get("destino"),
                 "route_key": route_key,
-                "official_match_count": len(matches),
-                "official_object_ids": "|".join(str(match["object_id"]) for match in matches),
-                "official_gasoductos": "|".join(sorted({match["gasoducto"] for match in matches})),
-                "official_tipos": "|".join(sorted({match["tipo_tramo"] for match in matches})),
-                "match_status": "matched" if matches else "unmatched",
-                "source": "diagnostic_match_red_tramos_vs_enargas_gis",
+                "auto_match_object_count": len(auto_object_ids),
+                "auto_match_object_ids": "|".join(str(object_id) for object_id in auto_object_ids),
+                "resolved_object_count": len(resolved_object_ids),
+                "official_object_ids": "|".join(str(object_id) for object_id in resolved_object_ids),
+                "official_tramos": "|".join(sorted({segment["tramo"] for segment in resolved_segments})),
+                "official_gasoductos": "|".join(sorted({segment["gasoducto"] for segment in resolved_segments})),
+                "official_tipos": "|".join(sorted({segment["tipo_tramo"] for segment in resolved_segments})),
+                "official_length_km": (
+                    sum(float(segment["length_km_geodesic"]) for segment in resolved_segments)
+                    if resolved_segments
+                    else None
+                ),
+                "match_strategy": match_strategy,
+                "match_status": match_status,
+                "notes": manual_notes.get(str(row.get("edge_id"))),
+                "source": "crosswalk_red_tramos_vs_enargas_gis",
             }
         )
 
@@ -262,21 +348,22 @@ def run() -> tuple[pd.DataFrame, pd.DataFrame]:
     _extract_archive()
 
     official_df = _read_official_gis()
+    official_segments_df = _build_official_segments(official_df)
     official_df.to_parquet(OUTPUT_PATH, index=False)
     log.info(
         "Saved processed: %s (%s rows, %s unique tramos)",
         OUTPUT_PATH,
         len(official_df),
-        official_df["tramo_key"].nunique(),
+        official_segments_df["tramo_key"].nunique(),
     )
     _save_snapshot(official_df, "red_gasoductos_enargas_oficial")
 
-    diagnostic_df = _build_diagnostic(official_df)
+    diagnostic_df = _build_diagnostic(official_segments_df)
     if not diagnostic_df.empty:
         diagnostic_df.to_parquet(DIAGNOSTIC_PATH, index=False)
-        matched_count = int((diagnostic_df["match_status"] == "matched").sum())
+        matched_count = int(diagnostic_df["match_status"].isin(["resolved_auto", "resolved_manual"]).sum())
         log.info(
-            "Saved processed: %s (%s rows, %s matched, %s unmatched)",
+            "Saved processed: %s (%s rows, %s resolved, %s unresolved)",
             DIAGNOSTIC_PATH,
             len(diagnostic_df),
             matched_count,
