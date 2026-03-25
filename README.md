@@ -16,6 +16,18 @@ Run from the repo root:
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap_env.ps1
 ```
 
+For a more robust local setup on Windows, especially on machines with multiple Python installs:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_local_dev.ps1
+```
+
+If you already have a packaged runtime snapshot from another machine:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_local_dev.ps1 -SnapshotZip C:\path\to\gcie_runtime_snapshot.zip
+```
+
 Optional network extras for `pandapipes`:
 
 ```powershell
@@ -41,6 +53,12 @@ bash ./scripts/bootstrap_env.sh --with-network
 - installs `requirements.txt`
 - optionally installs `requirements-network.txt`
 
+`setup_local_dev.ps1` does the same, but also:
+- prefers a Python installation with working SSL support
+- accepts `-PythonPath` to force a specific interpreter
+- optionally expands a runtime snapshot zip into the repo root
+- reports whether DuckDB and processed parquet artifacts are present
+
 ## Portable Runtime Snapshot
 
 The repository does not track the local DuckDB or `data/processed` artifacts.
@@ -53,7 +71,11 @@ python ./scripts/package_runtime_snapshot.py
 ```
 
 2. Copy the generated zip from `dist/` to the target machine.
-3. Unzip it at the repository root on the target machine.
+3. Unzip it at the repository root on the target machine, or run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_local_dev.ps1 -SnapshotZip C:\path\to\gcie_runtime_snapshot.zip
+```
 
 The package includes:
 - `gas-intel-datalake/duckdb/gas_intel.duckdb`

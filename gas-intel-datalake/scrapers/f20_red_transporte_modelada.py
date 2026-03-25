@@ -153,6 +153,27 @@ def _fix_text(value: Any) -> Any:
         return value
 
 
+def _decode_date_value(raw: Any) -> str | Any:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        cleaned = raw.strip()
+        if not cleaned:
+            return None
+        if cleaned.startswith("datetime'") and cleaned.endswith("'"):
+            cleaned = cleaned[len("datetime'") : -1]
+        try:
+            return pd.to_datetime(cleaned, utc=True).date().isoformat()
+        except (ValueError, TypeError):
+            return raw
+    if isinstance(raw, (int, float)):
+        if pd.isna(raw):
+            return None
+        unit = "ms" if abs(raw) > 10_000_000_000 else "s"
+        return pd.to_datetime(raw, unit=unit, utc=True).date().isoformat()
+    return raw
+
+
 def _decode_value(raw: Any, schema_entry: dict[str, Any], value_dicts: dict[str, Any]) -> Any:
     if raw is None:
         return None
@@ -167,7 +188,7 @@ def _decode_value(raw: Any, schema_entry: dict[str, Any], value_dicts: dict[str,
             return dictionary.get(str(raw), dictionary.get(raw, raw))
         return raw
     if schema_entry.get("T") == 7:
-        return pd.to_datetime(raw, unit="ms", utc=True).date().isoformat()
+        return _decode_date_value(raw)
     if schema_entry.get("T") in {3, 4}:
         return float(raw)
     return _fix_text(raw)
