@@ -49,6 +49,8 @@ OPTIONAL_TABLE_SOURCES = {
     "red_solver_resumen_mensual": "red_solver_resumen_mensual.parquet",
     "red_pandapipes_junctions": "red_pandapipes_junctions.parquet",
     "red_pandapipes_pipes": "red_pandapipes_pipes.parquet",
+    "red_gasoductos_enargas_oficial": "red_gasoductos_enargas_oficial.parquet",
+    "red_gasoductos_enargas_vs_modelada": "red_gasoductos_enargas_vs_modelada.parquet",
 }
 
 

@@ -8,6 +8,7 @@ This is no longer just a passive prepare-step: it is the operational backbone fo
 - A buildable DuckDB at `duckdb/gas_intel.duckdb`
 - Automated ingestion for production, non-conventional wells, ENARGAS demand, climate, exchange rate, calendar and gas prices
 - Transport flow and capacity layers from ENARGAS
+- Official ENARGAS GIS transport layer (`F25`) materialized for network sanitation and route matching
 - A modeled network stack:
   - `F20` modeled transport network
   - `F20b` canonical overrides
@@ -40,6 +41,8 @@ This is no longer just a passive prepare-step: it is the operational backbone fo
 - `red_tramos_canonica`
 - `red_tramo_metricas_mensuales`
 - `red_solver_resumen_mensual`
+- `red_gasoductos_enargas_oficial`
+- `red_gasoductos_enargas_vs_modelada`
 
 ## Operational rule
 SP0 is controlled infrastructure. Changes are allowed, but they should improve one of these:
@@ -52,6 +55,7 @@ SP0 is controlled infrastructure. Changes are allowed, but they should improve o
 ## Current gap
 The main open issue is not data volume but physical realism:
 - the canonical network still needs better official parameters,
+- route naming and topology still need alignment against official GIS and binational/export corridors,
 - some strategic assets are still represented with manual overrides,
 - `pandapipes` export exists but full-network convergence is not yet stable.
 
