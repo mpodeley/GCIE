@@ -58,10 +58,22 @@ def _load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFra
         columns=[
             "edge_id",
             "official_object_ids",
+            "official_component_count",
             "official_tramos",
             "official_gasoductos",
             "official_tipos",
+            "official_representative_object_id",
+            "official_representative_tipo",
+            "official_representative_gasoducto",
+            "official_corridor_length_km",
+            "official_total_component_length_km",
             "official_length_km",
+            "official_component_summary",
+            "official_components_json",
+            "official_physical_pipe_count_assumed",
+            "official_troncal_component_count",
+            "official_paralelo_component_count",
+            "official_loop_component_count",
             "match_strategy",
             "match_status",
         ]
@@ -159,10 +171,22 @@ def _build_edge_parameters(edges_df: pd.DataFrame, crosswalk_df: pd.DataFrame, l
     crosswalk_columns = [
         "edge_id",
         "official_object_ids",
+        "official_component_count",
         "official_tramos",
         "official_gasoductos",
         "official_tipos",
+        "official_representative_object_id",
+        "official_representative_tipo",
+        "official_representative_gasoducto",
+        "official_corridor_length_km",
+        "official_total_component_length_km",
         "official_length_km",
+        "official_component_summary",
+        "official_components_json",
+        "official_physical_pipe_count_assumed",
+        "official_troncal_component_count",
+        "official_paralelo_component_count",
+        "official_loop_component_count",
         "match_strategy",
         "match_status",
     ]
@@ -190,9 +214,28 @@ def _build_edge_parameters(edges_df: pd.DataFrame, crosswalk_df: pd.DataFrame, l
     result["effective_diameter_m"] = pd.to_numeric(result["diameter_m_override"], errors="coerce").fillna(
         pd.to_numeric(result["loop_max_diameter_m"], errors="coerce")
     )
+    result["official_component_count"] = pd.to_numeric(result["official_component_count"], errors="coerce")
+    result["official_physical_pipe_count_assumed"] = pd.to_numeric(
+        result["official_physical_pipe_count_assumed"], errors="coerce"
+    )
+    result["official_troncal_component_count"] = pd.to_numeric(
+        result["official_troncal_component_count"], errors="coerce"
+    )
+    result["official_paralelo_component_count"] = pd.to_numeric(
+        result["official_paralelo_component_count"], errors="coerce"
+    )
+    result["official_loop_component_count"] = pd.to_numeric(
+        result["official_loop_component_count"], errors="coerce"
+    )
+    result["official_corridor_length_km"] = pd.to_numeric(
+        result["official_corridor_length_km"], errors="coerce"
+    )
+    result["official_total_component_length_km"] = pd.to_numeric(
+        result["official_total_component_length_km"], errors="coerce"
+    )
     result["official_length_km"] = pd.to_numeric(result["official_length_km"], errors="coerce")
     result["effective_length_km"] = pd.to_numeric(result["length_km_override"], errors="coerce").fillna(
-        result["official_length_km"]
+        result["official_corridor_length_km"].fillna(result["official_length_km"])
     )
     result["source"] = "derived_from_red_tramos_canonica_and_f24_assets"
     return result.sort_values(["gasoducto", "ruta"]).reset_index(drop=True)

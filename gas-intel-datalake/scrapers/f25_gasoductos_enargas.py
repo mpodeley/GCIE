@@ -15,6 +15,7 @@ gaps between the official GIS and the F20/F20b network.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import shutil
@@ -53,10 +54,17 @@ CSV_PATH = RAW_DIR / "gasoductos_enargas.csv"
 RAR_PATH = RAW_DIR / "gasoductos_enargas.rar"
 OUTPUT_PATH = PROCESSED_DIR / "red_gasoductos_enargas_oficial.parquet"
 DIAGNOSTIC_PATH = PROCESSED_DIR / "red_gasoductos_enargas_vs_modelada.parquet"
+COMPONENTS_PATH = PROCESSED_DIR / "red_tramos_enargas_componentes.parquet"
 CANONICAL_MODELED_PATH = PROCESSED_DIR / "red_tramos_canonica.parquet"
 BASE_MODELED_PATH = PROCESSED_DIR / "red_tramos.parquet"
 MANUAL_CROSSWALK_PATH = TEMPLATES_DIR / "red_tramos_enargas_crosswalk.csv"
+MANUAL_COMPONENT_SPECS_PATH = TEMPLATES_DIR / "red_tramos_enargas_componentes_specs.csv"
 EARTH_RADIUS_KM = 6371.0088
+COMPONENT_TYPE_PRIORITY = {
+    "troncal": 0,
+    "paralelo": 1,
+    "loop": 2,
+}
 
 
 def _download_file(url: str, destination: Path) -> Path:
@@ -229,10 +237,30 @@ def _build_match_lookup(official_df: pd.DataFrame) -> dict[str, list[dict[str, A
 
 
 def _load_manual_crosswalk() -> pd.DataFrame:
-    columns = ["edge_id", "official_object_ids", "notes"]
+    columns = ["edge_id", "official_object_ids", "corridor_length_km_override", "notes"]
     if not MANUAL_CROSSWALK_PATH.exists():
         return pd.DataFrame(columns=columns)
     df = pd.read_csv(MANUAL_CROSSWALK_PATH)
+    for column in columns:
+        if column not in df.columns:
+            df[column] = pd.NA
+    return df[columns].fillna(pd.NA)
+
+
+def _load_manual_component_specs() -> pd.DataFrame:
+    columns = [
+        "edge_id",
+        "official_object_id",
+        "component_name",
+        "pipe_count_override",
+        "diameter_in_override",
+        "diameter_m_override",
+        "capacity_mm3_dia_override",
+        "notes",
+    ]
+    if not MANUAL_COMPONENT_SPECS_PATH.exists():
+        return pd.DataFrame(columns=columns)
+    df = pd.read_csv(MANUAL_COMPONENT_SPECS_PATH)
     for column in columns:
         if column not in df.columns:
             df[column] = pd.NA
@@ -251,17 +279,142 @@ def _parse_object_ids(value: Any) -> list[int]:
     return parsed
 
 
-def _build_diagnostic(official_df: pd.DataFrame) -> pd.DataFrame:
+def _parse_float(value: Any) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
+def _component_sort_key(segment: dict[str, Any]) -> tuple[int, float, int]:
+    tipo = _normalize_text(segment.get("tipo_tramo"))
+    priority = COMPONENT_TYPE_PRIORITY.get(tipo, 99)
+    length = float(segment.get("length_km_geodesic") or 0.0)
+    object_id = int(segment.get("object_id") or 0)
+    return priority, -length, object_id
+
+
+def _choose_representative_component(segments: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not segments:
+        return None
+    return sorted(segments, key=_component_sort_key)[0]
+
+
+def _format_component_summary(segments: list[dict[str, Any]]) -> str:
+    if not segments:
+        return ""
+    grouped: dict[str, list[float]] = {}
+    for segment in segments:
+        label = str(segment.get("tipo_tramo") or "SinTipo").strip() or "SinTipo"
+        grouped.setdefault(label, []).append(float(segment.get("length_km_geodesic") or 0.0))
+
+    ordered_labels = sorted(
+        grouped,
+        key=lambda label: (COMPONENT_TYPE_PRIORITY.get(_normalize_text(label), 99), label),
+    )
+    chunks: list[str] = []
+    for label in ordered_labels:
+        lengths = sorted(grouped[label], reverse=True)
+        serialized_lengths = ", ".join(f"{length:.1f}" for length in lengths)
+        chunks.append(f"{len(lengths)}x {label} ({serialized_lengths} km)")
+    return " + ".join(chunks)
+
+
+def _serialize_components(segments: list[dict[str, Any]]) -> str:
+    payload = [
+        {
+            "official_object_id": int(segment["object_id"]),
+            "official_gasoducto": str(segment.get("gasoducto") or ""),
+            "official_tramo": str(segment.get("tramo") or ""),
+            "official_tipo": str(segment.get("tipo_tramo") or ""),
+            "official_empresa": str(segment.get("empresa") or ""),
+            "official_length_km": round(float(segment.get("length_km_geodesic") or 0.0), 6),
+            "official_part_count": int(segment.get("official_part_count") or 0),
+        }
+        for segment in sorted(segments, key=_component_sort_key)
+    ]
+    return json.dumps(payload, ensure_ascii=True)
+
+
+def _aggregate_resolved_segments(
+    segments: list[dict[str, Any]],
+    corridor_length_km_override: float | None,
+) -> dict[str, Any]:
+    representative = _choose_representative_component(segments)
+    representative_length = (
+        float(representative["length_km_geodesic"])
+        if representative is not None
+        else None
+    )
+    corridor_length = (
+        corridor_length_km_override
+        if corridor_length_km_override is not None
+        else representative_length
+    )
+    total_component_length = (
+        sum(float(segment["length_km_geodesic"]) for segment in segments)
+        if segments
+        else None
+    )
+    counts_by_type = {
+        "official_troncal_component_count": 0,
+        "official_paralelo_component_count": 0,
+        "official_loop_component_count": 0,
+    }
+    for segment in segments:
+        tipo_key = _normalize_text(segment.get("tipo_tramo"))
+        if tipo_key == "troncal":
+            counts_by_type["official_troncal_component_count"] += 1
+        elif tipo_key == "paralelo":
+            counts_by_type["official_paralelo_component_count"] += 1
+        elif tipo_key == "loop":
+            counts_by_type["official_loop_component_count"] += 1
+
+    return {
+        "official_object_ids": "|".join(str(int(segment["object_id"])) for segment in segments),
+        "official_component_count": len(segments),
+        "official_tramos": "|".join(sorted({str(segment["tramo"]) for segment in segments if segment.get("tramo")})),
+        "official_gasoductos": "|".join(
+            sorted({str(segment["gasoducto"]) for segment in segments if segment.get("gasoducto")})
+        ),
+        "official_tipos": "|".join(
+            sorted({str(segment["tipo_tramo"]) for segment in segments if segment.get("tipo_tramo")})
+        ),
+        "official_representative_object_id": (
+            int(representative["object_id"]) if representative is not None else None
+        ),
+        "official_representative_tipo": (
+            str(representative.get("tipo_tramo") or "") if representative is not None else None
+        ),
+        "official_representative_gasoducto": (
+            str(representative.get("gasoducto") or "") if representative is not None else None
+        ),
+        "official_corridor_length_km": corridor_length,
+        "official_total_component_length_km": total_component_length,
+        "official_length_km": corridor_length,
+        "official_component_summary": _format_component_summary(segments),
+        "official_components_json": _serialize_components(segments) if segments else "[]",
+        "official_physical_pipe_count_assumed": len(segments),
+        **counts_by_type,
+    }
+
+
+def _build_diagnostic(official_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     modeled_payload = _load_modeled_network()
     if modeled_payload is None:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
     modeled_source_name, modeled_df = modeled_payload
     lookup = _build_match_lookup(official_df)
     official_by_id = {int(row["object_id"]): row for row in official_df.to_dict(orient="records")}
     manual_crosswalk = _load_manual_crosswalk()
+    manual_component_specs = _load_manual_component_specs()
     manual_lookup = {
         str(row["edge_id"]): _parse_object_ids(row["official_object_ids"])
+        for _, row in manual_crosswalk.iterrows()
+        if str(row["edge_id"]).strip()
+    }
+    manual_length_lookup = {
+        str(row["edge_id"]): _parse_float(row["corridor_length_km_override"])
         for _, row in manual_crosswalk.iterrows()
         if str(row["edge_id"]).strip()
     }
@@ -270,7 +423,13 @@ def _build_diagnostic(official_df: pd.DataFrame) -> pd.DataFrame:
         for _, row in manual_crosswalk.iterrows()
         if str(row["edge_id"]).strip()
     }
+    component_specs_lookup = {
+        (str(row["edge_id"]), int(row["official_object_id"])): row
+        for _, row in manual_component_specs.iterrows()
+        if str(row["edge_id"]).strip() and not pd.isna(row["official_object_id"])
+    }
     diagnostic_rows: list[dict[str, Any]] = []
+    component_rows: list[dict[str, Any]] = []
 
     for row in modeled_df.to_dict(orient="records"):
         route_key = _normalize_text(row.get("ruta"))
@@ -297,7 +456,14 @@ def _build_diagnostic(official_df: pd.DataFrame) -> pd.DataFrame:
             match_strategy = "none"
             match_status = "unmatched"
 
-        resolved_segments = [official_by_id[object_id] for object_id in resolved_object_ids]
+        resolved_segments = sorted(
+            [official_by_id[object_id] for object_id in resolved_object_ids],
+            key=_component_sort_key,
+        )
+        aggregate = _aggregate_resolved_segments(
+            resolved_segments,
+            corridor_length_km_override=manual_length_lookup.get(str(row.get("edge_id"))),
+        )
         diagnostic_rows.append(
             {
                 "modeled_source_table": modeled_source_name,
@@ -310,23 +476,86 @@ def _build_diagnostic(official_df: pd.DataFrame) -> pd.DataFrame:
                 "auto_match_object_count": len(auto_object_ids),
                 "auto_match_object_ids": "|".join(str(object_id) for object_id in auto_object_ids),
                 "resolved_object_count": len(resolved_object_ids),
-                "official_object_ids": "|".join(str(object_id) for object_id in resolved_object_ids),
-                "official_tramos": "|".join(sorted({segment["tramo"] for segment in resolved_segments})),
-                "official_gasoductos": "|".join(sorted({segment["gasoducto"] for segment in resolved_segments})),
-                "official_tipos": "|".join(sorted({segment["tipo_tramo"] for segment in resolved_segments})),
-                "official_length_km": (
-                    sum(float(segment["length_km_geodesic"]) for segment in resolved_segments)
-                    if resolved_segments
-                    else None
-                ),
+                **aggregate,
                 "match_strategy": match_strategy,
                 "match_status": match_status,
                 "notes": manual_notes.get(str(row.get("edge_id"))),
                 "source": "crosswalk_red_tramos_vs_enargas_gis",
             }
         )
+        representative_object_id = aggregate.get("official_representative_object_id")
+        total_component_length = aggregate.get("official_total_component_length_km")
+        for component_rank, segment in enumerate(resolved_segments, start=1):
+            object_id = int(segment["object_id"])
+            spec = component_specs_lookup.get((str(row.get("edge_id")), object_id))
+            component_length = float(segment.get("length_km_geodesic") or 0.0)
+            component_rows.append(
+                {
+                    "modeled_source_table": modeled_source_name,
+                    "edge_id": row.get("edge_id"),
+                    "ruta": row.get("ruta"),
+                    "gasoducto": row.get("gasoducto"),
+                    "origen": row.get("origen"),
+                    "destino": row.get("destino"),
+                    "match_strategy": match_strategy,
+                    "match_status": match_status,
+                    "official_object_id": object_id,
+                    "official_tramo": segment.get("tramo"),
+                    "official_gasoducto": segment.get("gasoducto"),
+                    "official_tipo": segment.get("tipo_tramo"),
+                    "official_empresa": segment.get("empresa"),
+                    "official_length_km": component_length,
+                    "official_part_count": int(segment.get("official_part_count") or 0),
+                    "component_rank": component_rank,
+                    "is_representative_component": object_id == representative_object_id,
+                    "official_length_share": (
+                        component_length / total_component_length
+                        if total_component_length and total_component_length > 0
+                        else None
+                    ),
+                    "component_name": (
+                        None
+                        if spec is None or pd.isna(spec["component_name"])
+                        else str(spec["component_name"]).strip()
+                    ),
+                    "pipe_count_override": (
+                        None
+                        if spec is None or pd.isna(spec["pipe_count_override"])
+                        else float(spec["pipe_count_override"])
+                    ),
+                    "diameter_in_override": (
+                        None
+                        if spec is None or pd.isna(spec["diameter_in_override"])
+                        else float(spec["diameter_in_override"])
+                    ),
+                    "diameter_m_override": (
+                        None
+                        if spec is None or pd.isna(spec["diameter_m_override"])
+                        else float(spec["diameter_m_override"])
+                    ),
+                    "capacity_mm3_dia_override": (
+                        None
+                        if spec is None or pd.isna(spec["capacity_mm3_dia_override"])
+                        else float(spec["capacity_mm3_dia_override"])
+                    ),
+                    "notes": (
+                        None
+                        if spec is None or pd.isna(spec["notes"])
+                        else str(spec["notes"]).strip()
+                    ),
+                    "source": "crosswalk_red_tramos_vs_enargas_gis",
+                }
+            )
 
-    return pd.DataFrame(diagnostic_rows).sort_values(["match_status", "gasoducto", "ruta"]).reset_index(drop=True)
+    diagnostic_df = pd.DataFrame(diagnostic_rows).sort_values(
+        ["match_status", "gasoducto", "ruta"]
+    ).reset_index(drop=True)
+    components_df = pd.DataFrame(component_rows)
+    if not components_df.empty:
+        components_df = components_df.sort_values(
+            ["gasoducto", "ruta", "component_rank", "official_object_id"]
+        ).reset_index(drop=True)
+    return diagnostic_df, components_df
 
 
 def _save_snapshot(df: pd.DataFrame, table_name: str) -> Path:
@@ -339,7 +568,7 @@ def _save_snapshot(df: pd.DataFrame, table_name: str) -> Path:
     return path
 
 
-def run() -> tuple[pd.DataFrame, pd.DataFrame]:
+def run() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -358,7 +587,7 @@ def run() -> tuple[pd.DataFrame, pd.DataFrame]:
     )
     _save_snapshot(official_df, "red_gasoductos_enargas_oficial")
 
-    diagnostic_df = _build_diagnostic(official_segments_df)
+    diagnostic_df, components_df = _build_diagnostic(official_segments_df)
     if not diagnostic_df.empty:
         diagnostic_df.to_parquet(DIAGNOSTIC_PATH, index=False)
         matched_count = int(diagnostic_df["match_status"].isin(["resolved_auto", "resolved_manual"]).sum())
@@ -370,10 +599,19 @@ def run() -> tuple[pd.DataFrame, pd.DataFrame]:
             len(diagnostic_df) - matched_count,
         )
         _save_snapshot(diagnostic_df, "red_gasoductos_enargas_vs_modelada")
+        if not components_df.empty:
+            components_df.to_parquet(COMPONENTS_PATH, index=False)
+            log.info(
+                "Saved processed: %s (%s rows, %s matched components)",
+                COMPONENTS_PATH,
+                len(components_df),
+                len(components_df["edge_id"].drop_duplicates()),
+            )
+            _save_snapshot(components_df, "red_tramos_enargas_componentes")
     else:
         log.info("Modeled network not found yet. Skipping match diagnostic.")
 
-    return official_df, diagnostic_df
+    return official_df, diagnostic_df, components_df
 
 
 if __name__ == "__main__":

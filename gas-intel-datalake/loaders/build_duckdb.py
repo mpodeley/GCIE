@@ -51,6 +51,7 @@ OPTIONAL_TABLE_SOURCES = {
     "red_pandapipes_pipes": "red_pandapipes_pipes.parquet",
     "red_gasoductos_enargas_oficial": "red_gasoductos_enargas_oficial.parquet",
     "red_gasoductos_enargas_vs_modelada": "red_gasoductos_enargas_vs_modelada.parquet",
+    "red_tramos_enargas_componentes": "red_tramos_enargas_componentes.parquet",
 }
 
 

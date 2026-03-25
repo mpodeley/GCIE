@@ -1,1 +1,6 @@
-edge_id,official_object_ids,notes
+edge_id,official_object_ids,corridor_length_km_override,notes
+f66c3b98a99f5861,92271|92342,,"Proxy corridor resolved as two official loop components over Cochico-La Mora."
+e60c4ff9c53d5965,92284|92299,,"Proxy corridor resolved as one troncal plus one paralelo over Dean Funes-Ferreyra."
+6c6418e8d1cbee34,92282|92285,,"Proxy corridor resolved as one troncal plus one paralelo over Lavalle-Recreo."
+b7293b2dfd91c291,92283|92296,,"Proxy corridor resolved as one troncal plus one paralelo over Recreo-Dean Funes."
+66fd71d29857c7e2,92275|92287|92288,,"Proxy corridor resolved as one troncal plus two paralelo components over Tucuman-Lavalle."
